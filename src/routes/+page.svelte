@@ -37,6 +37,7 @@
   // UI state
   let expandedL1 = $state(new Set<string>());
   let expandedL2 = $state(new Set<string>());
+  let expandedL3 = $state(new Set<string>());
   let expandedArticles = $state(new Set<string>());
   let subGroupSort = $state(new Map<string, 'umsatz' | 'anzahl'>());
   let articleSort = $state(new Map<string, 'umsatz' | 'anzahl'>());
@@ -87,7 +88,7 @@
 
   function switchTab(t: TabId) {
     activeTab = t;
-    expandedL1 = new Set(); expandedL2 = new Set(); expandedArticles = new Set();
+    expandedL1 = new Set(); expandedL2 = new Set(); expandedL3 = new Set(); expandedArticles = new Set();
     searchTerm = '';
   }
 
@@ -114,7 +115,7 @@
     })).sort((a, b) => b.umsatz - a.umsatz);
   }
 
-  function buildGroup(name: string, rows: RawRow[], total: number, subGroupField?: string): GroupNode {
+  function buildGroup(name: string, rows: RawRow[], total: number, subGroupFields?: string[]): GroupNode {
     let umsatz = 0, anzahl = 0;
     for (const r of rows) { const an = Number(r.Anzahl) || 0; umsatz += (Number(r.EinzelPreis) || 0) * an; anzahl += an; }
     const articles = buildArticles(rows, total);
@@ -123,11 +124,13 @@
       umsatz, anzahl, avgPreis: anzahl > 0 ? umsatz / anzahl : 0,
       anteil: total > 0 ? (umsatz / total) * 100 : 0, articles,
     };
-    if (subGroupField) {
+    if (subGroupFields && subGroupFields.length > 0) {
+      const field = subGroupFields[0];
+      const rest = subGroupFields.slice(1);
       const subMap = new Map<string, RawRow[]>();
-      for (const r of rows) { const k = (r as any)[subGroupField] || '(leer)'; if (!subMap.has(k)) subMap.set(k, []); subMap.get(k)!.push(r); }
+      for (const r of rows) { const k = (r as any)[field] || '(leer)'; if (!subMap.has(k)) subMap.set(k, []); subMap.get(k)!.push(r); }
       node.subGroups = Array.from(subMap.entries())
-        .map(([sn, sr]) => buildGroup(sn, sr, total))
+        .map(([sn, sr]) => buildGroup(sn, sr, total, rest.length > 0 ? rest : undefined))
         .sort((a, b) => b.umsatz - a.umsatz);
     }
     return node;
@@ -143,20 +146,25 @@
     totalUmsatz = total;
     totalAnzahl = allData.reduce((s, r) => s + (Number(r.Anzahl) || 0), 0);
 
-    // Tab 1: by Kollektion
+    // Tab 1: by Kollektion (flat, no subgroups)
     const byKoll = new Map<string, RawRow[]>();
     for (const r of allData) { const k = r.Kollektion; if (!byKoll.has(k)) byKoll.set(k, []); byKoll.get(k)!.push(r); }
     tabData.kollektion = Array.from(byKoll.entries()).map(([n, rows]) => buildGroup(n, rows, total));
 
-    // Tab 2: by Form → subgroup by Kollektion
-    const byForm = new Map<string, RawRow[]>();
-    for (const r of allData) { const k = r.Form || '(leer)'; if (!byForm.has(k)) byForm.set(k, []); byForm.get(k)!.push(r); }
-    tabData.form = Array.from(byForm.entries()).map(([n, rows]) => buildGroup(n, rows, total, 'Kollektion'));
+    // Tab 2: by FormPfad (first word of Form) → Form → Kollektion
+    const byFormPfad = new Map<string, RawRow[]>();
+    for (const r of allData) {
+      const form = (r.Form || '').trim();
+      const pfad = form.split(/\s+/)[0] || '(leer)';
+      if (!byFormPfad.has(pfad)) byFormPfad.set(pfad, []);
+      byFormPfad.get(pfad)!.push(r);
+    }
+    tabData.form = Array.from(byFormPfad.entries()).map(([n, rows]) => buildGroup(n, rows, total, ['Form', 'Kollektion']));
 
     // Tab 3: by Art → subgroup by Kollektion
     const byArt = new Map<string, RawRow[]>();
     for (const r of allData) { const k = r.Art || '(leer)'; if (!byArt.has(k)) byArt.set(k, []); byArt.get(k)!.push(r); }
-    tabData.art = Array.from(byArt.entries()).map(([n, rows]) => buildGroup(n, rows, total, 'Kollektion'));
+    tabData.art = Array.from(byArt.entries()).map(([n, rows]) => buildGroup(n, rows, total, ['Kollektion']));
 
     loading = false;
   });
@@ -262,10 +270,10 @@
               {#if l1Open}
                 <div class="px-5 pb-5 pt-3" style="background: var(--warm-100); border-top: 1px solid var(--warm-200);">
                   {#if hasSubGroups}
-                    <!-- L2: SubGroups (Kollektionen inside Form/Art) -->
+                    <!-- L2: SubGroups -->
                     {@const sg1Sort = getMapVal(subGroupSort, g1.name)}
                     <div class="flex items-center gap-3 mb-3">
-                      <p class="text-[10px] font-semibold uppercase tracking-[0.12em]" style="color: var(--warm-400);">Kollektionen — sortiert nach</p>
+                      <p class="text-[10px] font-semibold uppercase tracking-[0.12em]" style="color: var(--warm-400);">{g1.subGroups?.[0]?.subGroups ? 'Formen' : 'Kollektionen'} — sortiert nach</p>
                       <div class="flex rounded-lg overflow-hidden" style="border: 1px solid var(--warm-200);">
                         <button onclick={() => subGroupSort = setMapVal(subGroupSort, g1.name, 'umsatz')} class="px-3 py-1 text-[11px] font-medium" style="background: {sg1Sort === 'umsatz' ? 'var(--accent)' : 'white'}; color: {sg1Sort === 'umsatz' ? 'white' : 'var(--warm-500)'};">Umsatz</button>
                         <button onclick={() => subGroupSort = setMapVal(subGroupSort, g1.name, 'anzahl')} class="px-3 py-1 text-[11px] font-medium" style="background: {sg1Sort === 'anzahl' ? 'var(--accent)' : 'white'}; color: {sg1Sort === 'anzahl' ? 'white' : 'var(--warm-500)'}; border-left: 1px solid var(--warm-200);">Anzahl</button>
@@ -275,6 +283,7 @@
                       {#each sortItems(g1.subGroups || [], sg1Sort) as sg (sg.name)}
                         {@const l2Key = `${g1.name}::${sg.name}`}
                         {@const l2Open = expandedL2.has(l2Key)}
+                        {@const sgHasSubGroups = !!sg.subGroups && sg.subGroups.length > 0}
                         <div class="rounded-xl overflow-hidden" style="border: 1px solid var(--warm-200); background: white;">
                           <!-- svelte-ignore a11y_click_events_have_key_events -->
                           <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -287,55 +296,132 @@
                             {/if}
                             <div class="flex-1 min-w-0">
                               <p class="text-xs font-medium truncate" style="color: var(--warm-700);">{sg.name}</p>
-                              <p class="text-[9px]" style="color: var(--warm-400);">{sg.articles.length} Artikel</p>
+                              <p class="text-[9px]" style="color: var(--warm-400);">{sgHasSubGroups ? `${sg.subGroups?.length} Kollektionen · ` : ''}{sg.articles.length} Artikel</p>
                             </div>
                             <p class="text-xs tabular-nums font-medium" style="color: var(--warm-700);">{fmtEUR(sg.umsatz)}</p>
                             <p class="text-[11px] tabular-nums" style="color: var(--warm-500);">{fmtNum(sg.anzahl)} Stk</p>
                             <div class="text-[10px] transition-transform" class:rotate-180={l2Open} style="color: var(--accent);">▾</div>
                           </div>
                           {#if l2Open}
-                            <!-- Articles inside SubGroup -->
-                            {@const artSortKey = `${l2Key}::art`}
-                            {@const aSort = getMapVal(articleSort, artSortKey)}
-                            <div class="px-4 pb-4 pt-2" style="background: var(--warm-50); border-top: 1px solid var(--warm-100);">
-                              <div class="flex items-center gap-3 mb-3">
-                                <p class="text-[9px] font-semibold uppercase tracking-[0.12em]" style="color: var(--warm-400);">Artikel — sortiert nach</p>
-                                <div class="flex rounded-md overflow-hidden" style="border: 1px solid var(--warm-200);">
-                                  <button onclick={() => articleSort = setMapVal(articleSort, artSortKey, 'umsatz')} class="px-2.5 py-0.5 text-[10px] font-medium" style="background: {aSort === 'umsatz' ? 'var(--accent)' : 'white'}; color: {aSort === 'umsatz' ? 'white' : 'var(--warm-500)'};">Umsatz</button>
-                                  <button onclick={() => articleSort = setMapVal(articleSort, artSortKey, 'anzahl')} class="px-2.5 py-0.5 text-[10px] font-medium" style="background: {aSort === 'anzahl' ? 'var(--accent)' : 'white'}; color: {aSort === 'anzahl' ? 'white' : 'var(--warm-500)'}; border-left: 1px solid var(--warm-200);">Anzahl</button>
+                            {#if sgHasSubGroups}
+                              <!-- L3: SubGroups inside SubGroup (Kollektionen inside Form) -->
+                              {@const sg2Sort = getMapVal(subGroupSort, l2Key)}
+                              <div class="px-4 pb-4 pt-2" style="background: var(--warm-50); border-top: 1px solid var(--warm-100);">
+                                <div class="flex items-center gap-3 mb-3">
+                                  <p class="text-[9px] font-semibold uppercase tracking-[0.12em]" style="color: var(--warm-400);">Kollektionen — sortiert nach</p>
+                                  <div class="flex rounded-md overflow-hidden" style="border: 1px solid var(--warm-200);">
+                                    <button onclick={() => subGroupSort = setMapVal(subGroupSort, l2Key, 'umsatz')} class="px-2.5 py-0.5 text-[10px] font-medium" style="background: {sg2Sort === 'umsatz' ? 'var(--accent)' : 'white'}; color: {sg2Sort === 'umsatz' ? 'white' : 'var(--warm-500)'};">Umsatz</button>
+                                    <button onclick={() => subGroupSort = setMapVal(subGroupSort, l2Key, 'anzahl')} class="px-2.5 py-0.5 text-[10px] font-medium" style="background: {sg2Sort === 'anzahl' ? 'var(--accent)' : 'white'}; color: {sg2Sort === 'anzahl' ? 'white' : 'var(--warm-500)'}; border-left: 1px solid var(--warm-200);">Anzahl</button>
+                                  </div>
+                                </div>
+                                <div class="space-y-1">
+                                  {#each sortItems(sg.subGroups || [], sg2Sort) as sg3 (sg3.name)}
+                                    {@const l3Key = `${l2Key}::${sg3.name}`}
+                                    {@const l3Open = expandedL3.has(l3Key)}
+                                    <div class="rounded-lg overflow-hidden" style="border: 1px solid var(--warm-200); background: white;">
+                                      <!-- svelte-ignore a11y_click_events_have_key_events -->
+                                      <!-- svelte-ignore a11y_no_static_element_interactions -->
+                                      <div class="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:bg-[var(--warm-50)] transition-colors"
+                                        onclick={() => expandedL3 = toggleSet(expandedL3, l3Key)}>
+                                        {#if sg3.thumbBildId}
+                                          <img src={imgUrl(sg3.thumbBildId, 60)} alt="" class="w-7 h-7 object-cover rounded-md" loading="lazy" onerror={(e) => { (e.currentTarget as HTMLImageElement).style.display='none'; }} />
+                                        {:else}
+                                          <div class="w-7 h-7 rounded-md flex items-center justify-center text-[8px] font-bold" style="background: var(--warm-100); color: var(--warm-400);">{sg3.name.slice(0,2)}</div>
+                                        {/if}
+                                        <div class="flex-1 min-w-0">
+                                          <p class="text-[11px] font-medium truncate" style="color: var(--warm-700);">{sg3.name}</p>
+                                          <p class="text-[8px]" style="color: var(--warm-400);">{sg3.articles.length} Artikel</p>
+                                        </div>
+                                        <p class="text-[11px] tabular-nums font-medium" style="color: var(--warm-700);">{fmtEUR(sg3.umsatz)}</p>
+                                        <p class="text-[10px] tabular-nums" style="color: var(--warm-500);">{fmtNum(sg3.anzahl)} Stk</p>
+                                        <div class="text-[9px] transition-transform" class:rotate-180={l3Open} style="color: var(--accent);">▾</div>
+                                      </div>
+                                      {#if l3Open}
+                                        <!-- Articles inside L3 -->
+                                        {@const artSortKey3 = `${l3Key}::art`}
+                                        {@const aSort3 = getMapVal(articleSort, artSortKey3)}
+                                        <div class="px-3 pb-3 pt-2" style="background: var(--warm-100); border-top: 1px solid var(--warm-100);">
+                                          <div class="flex items-center gap-2 mb-2">
+                                            <p class="text-[8px] font-semibold uppercase tracking-[0.12em]" style="color: var(--warm-400);">Artikel —</p>
+                                            <div class="flex rounded-md overflow-hidden" style="border: 1px solid var(--warm-200);">
+                                              <button onclick={() => articleSort = setMapVal(articleSort, artSortKey3, 'umsatz')} class="px-2 py-0.5 text-[9px] font-medium" style="background: {aSort3 === 'umsatz' ? 'var(--accent)' : 'white'}; color: {aSort3 === 'umsatz' ? 'white' : 'var(--warm-500)'};">Umsatz</button>
+                                              <button onclick={() => articleSort = setMapVal(articleSort, artSortKey3, 'anzahl')} class="px-2 py-0.5 text-[9px] font-medium" style="background: {aSort3 === 'anzahl' ? 'var(--accent)' : 'white'}; color: {aSort3 === 'anzahl' ? 'white' : 'var(--warm-500)'}; border-left: 1px solid var(--warm-200);">Anzahl</button>
+                                            </div>
+                                          </div>
+                                          <div class="flex flex-wrap gap-2">
+                                            {#each sortItems(sg3.articles, aSort3) as art}
+                                              {@const aKey = `${l3Key}::${art.bildId}`}
+                                              {@const aOpen = expandedArticles.has(aKey)}
+                                              <div class="flex flex-col">
+                                                <!-- svelte-ignore a11y_click_events_have_key_events -->
+                                                <!-- svelte-ignore a11y_no_static_element_interactions -->
+                                                <div class="cursor-pointer" onclick={(e) => { e.stopPropagation(); expandedArticles = toggleSet(expandedArticles, aKey); }}>
+                                                  <div class="w-14 h-14 sm:w-18 sm:h-18 rounded-lg overflow-hidden shadow-sm transition-all hover:shadow-md hover:scale-105" style="border: 1.5px solid {aOpen ? 'var(--accent)' : 'var(--warm-200)'};">
+                                                    <img src={imgUrl(art.bildId, 140)} alt="" class="w-full h-full object-cover" loading="lazy" onerror={(e) => { (e.currentTarget as HTMLImageElement).parentElement!.style.display='none'; }} />
+                                                  </div>
+                                                  <div class="mt-0.5 text-center"><p class="text-[8px] font-medium tabular-nums" style="color: var(--warm-700);">{fmtEUR(art.umsatz)}</p><p class="text-[7px] tabular-nums" style="color: var(--warm-400);">{fmtNum(art.anzahl)} Stk</p></div>
+                                                </div>
+                                                {#if aOpen}
+                                                  <div class="mt-1 w-40 rounded-lg p-2 shadow-md" style="background: white; border: 1px solid var(--warm-200);">
+                                                    <p class="text-[8px] font-semibold mb-1" style="color: var(--warm-400);">Verkäufe nach Kasse</p>
+                                                    {#each art.kassenStats as ks}
+                                                      <div class="flex items-center justify-between py-0.5"><span class="text-[9px] truncate" style="color: var(--warm-600); max-width: 90px;" title={ks.kasse}>{ks.kasse}</span><span class="text-[9px] tabular-nums font-medium" style="color: var(--warm-700);">{fmtNum(ks.anzahl)}</span></div>
+                                                    {/each}
+                                                  </div>
+                                                {/if}
+                                              </div>
+                                            {/each}
+                                          </div>
+                                        </div>
+                                      {/if}
+                                    </div>
+                                  {/each}
                                 </div>
                               </div>
-                              <div class="flex flex-wrap gap-2.5">
-                                {#each sortItems(sg.articles, aSort) as art}
-                                  {@const aKey = `${l2Key}::${art.bildId}`}
-                                  {@const aOpen = expandedArticles.has(aKey)}
-                                  <div class="flex flex-col">
-                                    <!-- svelte-ignore a11y_click_events_have_key_events -->
-                                    <!-- svelte-ignore a11y_no_static_element_interactions -->
-                                    <div class="cursor-pointer" onclick={(e) => { e.stopPropagation(); expandedArticles = toggleSet(expandedArticles, aKey); }}>
-                                      <div class="w-16 h-16 sm:w-20 sm:h-20 rounded-lg overflow-hidden shadow-sm transition-all hover:shadow-md hover:scale-105" style="border: 1.5px solid {aOpen ? 'var(--accent)' : 'var(--warm-200)'};">
-                                        <img src={imgUrl(art.bildId, 160)} alt="" class="w-full h-full object-cover" loading="lazy" onerror={(e) => { (e.currentTarget as HTMLImageElement).parentElement!.style.display='none'; }} />
-                                      </div>
-                                      <div class="mt-1 text-center"><p class="text-[9px] font-medium tabular-nums" style="color: var(--warm-700);">{fmtEUR(art.umsatz)}</p><p class="text-[8px] tabular-nums" style="color: var(--warm-400);">{fmtNum(art.anzahl)} Stk</p></div>
-                                    </div>
-                                    {#if aOpen}
-                                      <div class="mt-1.5 w-44 rounded-lg p-2.5 shadow-md" style="background: white; border: 1px solid var(--warm-200);">
-                                        <p class="text-[9px] font-semibold mb-1.5" style="color: var(--warm-400);">Verkäufe nach Kasse</p>
-                                        {#each art.kassenStats as ks}
-                                          <div class="flex items-center justify-between py-0.5"><span class="text-[10px] truncate" style="color: var(--warm-600); max-width: 100px;" title={ks.kasse}>{ks.kasse}</span><span class="text-[10px] tabular-nums font-medium" style="color: var(--warm-700);">{fmtNum(ks.anzahl)} Stk</span></div>
-                                        {/each}
-                                      </div>
-                                    {/if}
+                            {:else}
+                              <!-- Articles directly inside L2 (no further subGroups) -->
+                              {@const artSortKey = `${l2Key}::art`}
+                              {@const aSort = getMapVal(articleSort, artSortKey)}
+                              <div class="px-4 pb-4 pt-2" style="background: var(--warm-50); border-top: 1px solid var(--warm-100);">
+                                <div class="flex items-center gap-3 mb-3">
+                                  <p class="text-[9px] font-semibold uppercase tracking-[0.12em]" style="color: var(--warm-400);">Artikel — sortiert nach</p>
+                                  <div class="flex rounded-md overflow-hidden" style="border: 1px solid var(--warm-200);">
+                                    <button onclick={() => articleSort = setMapVal(articleSort, artSortKey, 'umsatz')} class="px-2.5 py-0.5 text-[10px] font-medium" style="background: {aSort === 'umsatz' ? 'var(--accent)' : 'white'}; color: {aSort === 'umsatz' ? 'white' : 'var(--warm-500)'};">Umsatz</button>
+                                    <button onclick={() => articleSort = setMapVal(articleSort, artSortKey, 'anzahl')} class="px-2.5 py-0.5 text-[10px] font-medium" style="background: {aSort === 'anzahl' ? 'var(--accent)' : 'white'}; color: {aSort === 'anzahl' ? 'white' : 'var(--warm-500)'}; border-left: 1px solid var(--warm-200);">Anzahl</button>
                                   </div>
-                                {/each}
+                                </div>
+                                <div class="flex flex-wrap gap-2.5">
+                                  {#each sortItems(sg.articles, aSort) as art}
+                                    {@const aKey = `${l2Key}::${art.bildId}`}
+                                    {@const aOpen = expandedArticles.has(aKey)}
+                                    <div class="flex flex-col">
+                                      <!-- svelte-ignore a11y_click_events_have_key_events -->
+                                      <!-- svelte-ignore a11y_no_static_element_interactions -->
+                                      <div class="cursor-pointer" onclick={(e) => { e.stopPropagation(); expandedArticles = toggleSet(expandedArticles, aKey); }}>
+                                        <div class="w-16 h-16 sm:w-20 sm:h-20 rounded-lg overflow-hidden shadow-sm transition-all hover:shadow-md hover:scale-105" style="border: 1.5px solid {aOpen ? 'var(--accent)' : 'var(--warm-200)'};">
+                                          <img src={imgUrl(art.bildId, 160)} alt="" class="w-full h-full object-cover" loading="lazy" onerror={(e) => { (e.currentTarget as HTMLImageElement).parentElement!.style.display='none'; }} />
+                                        </div>
+                                        <div class="mt-1 text-center"><p class="text-[9px] font-medium tabular-nums" style="color: var(--warm-700);">{fmtEUR(art.umsatz)}</p><p class="text-[8px] tabular-nums" style="color: var(--warm-400);">{fmtNum(art.anzahl)} Stk</p></div>
+                                      </div>
+                                      {#if aOpen}
+                                        <div class="mt-1.5 w-44 rounded-lg p-2.5 shadow-md" style="background: white; border: 1px solid var(--warm-200);">
+                                          <p class="text-[9px] font-semibold mb-1.5" style="color: var(--warm-400);">Verkäufe nach Kasse</p>
+                                          {#each art.kassenStats as ks}
+                                            <div class="flex items-center justify-between py-0.5"><span class="text-[10px] truncate" style="color: var(--warm-600); max-width: 100px;" title={ks.kasse}>{ks.kasse}</span><span class="text-[10px] tabular-nums font-medium" style="color: var(--warm-700);">{fmtNum(ks.anzahl)} Stk</span></div>
+                                          {/each}
+                                        </div>
+                                      {/if}
+                                    </div>
+                                  {/each}
+                                </div>
                               </div>
-                            </div>
+                            {/if}
                           {/if}
                         </div>
                       {/each}
                     </div>
                   {:else}
-                    <!-- Direct Articles (Tab 1: Kollektion) -->
+                    <!-- Direct Articles (Tab 1: Kollektion — no subgroups) -->
                     {@const artSortKey = `${g1.name}::art`}
                     {@const aSort = getMapVal(articleSort, artSortKey)}
                     <div class="flex items-center gap-3 mb-4">
