@@ -11,12 +11,27 @@
     Form: string;
     Nr: string;
     SubKollektion: string;
+    Kasse: string;
+    Monat: string;
+    KW: string;
+    Wochentag: string;
+  }
+
+  interface Sale {
+    monat: string;
+    kw: string;
+    wochentag: string;
+    kasse: string;
+    anzahl: number;
+    umsatz: number;
+    einzelPreis: number;
   }
 
   interface Article {
     bildId: string;
     umsatz: number;
     anzahl: number;
+    sales: Sale[];
   }
 
   interface Collection {
@@ -25,7 +40,7 @@
     umsatz: number;
     anzahl: number;
     avgPreis: number;
-    anteil: number; // % of total
+    anteil: number;
     articles: Article[];
   }
 
@@ -34,10 +49,15 @@
   let totalUmsatz = $state(0);
   let totalAnzahl = $state(0);
   let expandedSet = $state(new Set<string>());
+  let expandedArticles = $state(new Set<string>()); // "kollektion::bildId"
+  let articleSortMode = $state(new Map<string, 'umsatz' | 'anzahl'>()); // per collection
   let searchTerm = $state('');
   let sortKey = $state<'umsatz' | 'anzahl' | 'avgPreis' | 'name' | 'anteil'>('umsatz');
   let sortDir = $state<'asc' | 'desc'>('desc');
   let lightboxUrl = $state('');
+
+  // KW sort order for "newest first": higher KW = newer
+  const monatOrder: Record<string, number> = { Jan: 1, Feb: 2, Mär: 3, Mar: 3, Apr: 4, Mai: 5, May: 5, Jun: 6, Jul: 7, Aug: 8, Sep: 9, Okt: 10, Oct: 10, Nov: 11, Dez: 12, Dec: 12 };
 
   let filtered = $derived.by(() => {
     let list = collections;
@@ -69,6 +89,28 @@
     expandedSet = s;
   }
 
+  function toggleArticle(colName: string, bildId: string) {
+    const key = `${colName}::${bildId}`;
+    const s = new Set(expandedArticles);
+    if (s.has(key)) s.delete(key); else s.add(key);
+    expandedArticles = s;
+  }
+
+  function getArticleSort(colName: string): 'umsatz' | 'anzahl' {
+    return articleSortMode.get(colName) || 'umsatz';
+  }
+
+  function setArticleSort(colName: string, mode: 'umsatz' | 'anzahl') {
+    const m = new Map(articleSortMode);
+    m.set(colName, mode);
+    articleSortMode = m;
+  }
+
+  function sortedArticles(col: Collection): Article[] {
+    const mode = getArticleSort(col.name);
+    return [...col.articles].sort((a, b) => mode === 'umsatz' ? b.umsatz - a.umsatz : b.anzahl - a.anzahl);
+  }
+
   function setSort(key: typeof sortKey) {
     if (sortKey === key) sortDir = sortDir === 'desc' ? 'asc' : 'desc';
     else { sortKey = key; sortDir = 'desc'; }
@@ -78,8 +120,8 @@
     const res = await fetch('/data.json');
     const data: RawRow[] = await res.json();
 
-    // Aggregate by Kollektion
-    const map = new Map<string, { umsatz: number; anzahl: number; articles: Map<string, { umsatz: number; anzahl: number }> }>();
+    // Aggregate by Kollektion → Article (BildId) → Sales
+    const map = new Map<string, { umsatz: number; anzahl: number; articles: Map<string, { umsatz: number; anzahl: number; sales: Sale[] }> }>();
 
     for (const r of data) {
       const k = r.Kollektion;
@@ -93,10 +135,19 @@
 
       const bid = String(r.BildId);
       if (bid && bid !== '0' && bid !== '') {
-        if (!col.articles.has(bid)) col.articles.set(bid, { umsatz: 0, anzahl: 0 });
+        if (!col.articles.has(bid)) col.articles.set(bid, { umsatz: 0, anzahl: 0, sales: [] });
         const art = col.articles.get(bid)!;
         art.umsatz += lineUmsatz;
         art.anzahl += an;
+        art.sales.push({
+          monat: r.Monat || '',
+          kw: r.KW || '',
+          wochentag: r.Wochentag || '',
+          kasse: r.Kasse || '',
+          anzahl: an,
+          umsatz: lineUmsatz,
+          einzelPreis: ep,
+        });
       }
     }
 
@@ -106,7 +157,15 @@
 
     collections = Array.from(map.entries()).map(([name, c]) => {
       const articles = Array.from(c.articles.entries())
-        .map(([bildId, a]) => ({ bildId, umsatz: a.umsatz, anzahl: a.anzahl }))
+        .map(([bildId, a]) => {
+          // Sort sales: newest first (by Monat desc, then KW desc)
+          const sorted = [...a.sales].sort((x, y) => {
+            const mx = monatOrder[x.monat] || 0, my = monatOrder[y.monat] || 0;
+            if (my !== mx) return my - mx;
+            return Number(y.kw) - Number(x.kw);
+          });
+          return { bildId, umsatz: a.umsatz, anzahl: a.anzahl, sales: sorted };
+        })
         .sort((a, b) => b.umsatz - a.umsatz);
 
       return {
@@ -149,7 +208,7 @@
     <div class="flex items-center justify-center h-80">
       <div class="text-center">
         <div class="w-10 h-10 rounded-full animate-spin mx-auto mb-4" style="border: 3px solid var(--warm-200); border-top-color: var(--accent);"></div>
-        <p style="color: var(--warm-400); font-family: var(--font-body);">Daten werden geladen...</p>
+        <p style="color: var(--warm-400);">Daten werden geladen...</p>
       </div>
     </div>
   {:else}
@@ -200,16 +259,16 @@
 
         <!-- Rows -->
         <div class="divide-y" style="border-color: var(--warm-100);">
-          {#each filtered as col, i (col.name)}
+          {#each filtered as col (col.name)}
             {@const isOpen = expandedSet.has(col.name)}
-            <!-- Row -->
+            {@const artSort = getArticleSort(col.name)}
             <div>
+              <!-- Collection Row -->
               <!-- svelte-ignore a11y_click_events_have_key_events -->
               <!-- svelte-ignore a11y_no_static_element_interactions -->
               <div class="grid items-center gap-2 px-5 py-3 cursor-pointer transition-colors hover:bg-[var(--warm-100)]/40"
                 style="grid-template-columns: 56px 1fr repeat(4, minmax(90px, auto));"
                 onclick={() => toggleExpand(col.name)}>
-                <!-- Thumb -->
                 <div class="relative">
                   {#if col.thumbBildId}
                     <img src={imgUrl(col.thumbBildId, 100)} alt="" class="w-11 h-11 object-cover rounded-lg shadow-sm" loading="lazy"
@@ -219,30 +278,16 @@
                       <svg class="w-5 h-5" style="color: var(--warm-300);" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
                     </div>
                   {/if}
-                  <!-- Expand indicator -->
                   <div class="absolute -right-1 -bottom-1 w-4 h-4 rounded-full flex items-center justify-center text-[8px] transition-transform"
-                    style="background: var(--accent); color: white;"
-                    class:rotate-180={isOpen}>
-                    ▾
-                  </div>
+                    style="background: var(--accent); color: white;" class:rotate-180={isOpen}>▾</div>
                 </div>
-
-                <!-- Name -->
                 <div class="min-w-0">
-                  <p class="text-sm font-medium truncate" style="color: var(--warm-800); font-family: var(--font-body);">{col.name}</p>
+                  <p class="text-sm font-medium truncate" style="color: var(--warm-800);">{col.name}</p>
                   <p class="text-[10px]" style="color: var(--warm-400);">{col.articles.length} Artikel</p>
                 </div>
-
-                <!-- Umsatz -->
                 <p class="text-sm text-right tabular-nums font-medium" style="color: var(--warm-700);">{fmtEUR(col.umsatz)}</p>
-
-                <!-- Anzahl -->
                 <p class="text-sm text-right tabular-nums" style="color: var(--warm-600);">{fmtNum(col.anzahl)}</p>
-
-                <!-- Avg Preis -->
                 <p class="text-sm text-right tabular-nums" style="color: var(--warm-600);">{fmtEUR(col.avgPreis)}</p>
-
-                <!-- Anteil -->
                 <div class="text-right">
                   <p class="text-sm tabular-nums font-medium" style="color: var(--accent);">{fmtPct(col.anteil)}</p>
                   <div class="w-full h-1 rounded-full mt-1 overflow-hidden" style="background: var(--warm-100);">
@@ -253,23 +298,72 @@
 
               <!-- Expanded: Article Gallery -->
               {#if isOpen}
-                <div class="px-5 pb-5 pt-1" style="background: var(--warm-100); border-top: 1px solid var(--warm-200);">
-                  <p class="text-[10px] font-semibold uppercase tracking-[0.12em] mb-3" style="color: var(--warm-400);">
-                    Verkaufte Artikel — sortiert nach Umsatz
-                  </p>
+                <div class="px-5 pb-5 pt-3" style="background: var(--warm-100); border-top: 1px solid var(--warm-200);">
+                  <!-- Sort Toggle -->
+                  <div class="flex items-center gap-3 mb-4">
+                    <p class="text-[10px] font-semibold uppercase tracking-[0.12em]" style="color: var(--warm-400);">Verkaufte Artikel — sortiert nach</p>
+                    <div class="flex rounded-lg overflow-hidden" style="border: 1px solid var(--warm-200);">
+                      <button onclick={() => setArticleSort(col.name, 'umsatz')}
+                        class="px-3 py-1 text-[11px] font-medium transition-all"
+                        style="background: {artSort === 'umsatz' ? 'var(--accent)' : 'white'}; color: {artSort === 'umsatz' ? 'white' : 'var(--warm-500)'};">
+                        Umsatz
+                      </button>
+                      <button onclick={() => setArticleSort(col.name, 'anzahl')}
+                        class="px-3 py-1 text-[11px] font-medium transition-all"
+                        style="background: {artSort === 'anzahl' ? 'var(--accent)' : 'white'}; color: {artSort === 'anzahl' ? 'white' : 'var(--warm-500)'}; border-left: 1px solid var(--warm-200);">
+                        Anzahl
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- Articles -->
                   <div class="flex flex-wrap gap-3">
-                    {#each col.articles as art}
-                      <!-- svelte-ignore a11y_click_events_have_key_events -->
-                      <!-- svelte-ignore a11y_no_static_element_interactions -->
-                      <div class="group cursor-pointer" onclick={() => lightboxUrl = imgUrl(art.bildId, 1000)}>
-                        <div class="w-20 h-20 sm:w-24 sm:h-24 rounded-xl overflow-hidden shadow-sm transition-all group-hover:shadow-lg group-hover:scale-105" style="border: 1.5px solid var(--warm-200);">
-                          <img src={imgUrl(art.bildId, 200)} alt="" class="w-full h-full object-cover" loading="lazy"
-                            onerror={(e) => { (e.currentTarget as HTMLImageElement).parentElement!.style.display='none'; }} />
+                    {#each sortedArticles(col) as art}
+                      {@const artKey = `${col.name}::${art.bildId}`}
+                      {@const artOpen = expandedArticles.has(artKey)}
+                      <div class="flex flex-col">
+                        <!-- Article Card -->
+                        <!-- svelte-ignore a11y_click_events_have_key_events -->
+                        <!-- svelte-ignore a11y_no_static_element_interactions -->
+                        <div class="cursor-pointer transition-all" class:ring-2={artOpen} class:ring-amber-400={artOpen} class:rounded-xl={true}
+                          onclick={(e) => { e.stopPropagation(); toggleArticle(col.name, art.bildId); }}>
+                          <div class="w-20 h-20 sm:w-24 sm:h-24 rounded-xl overflow-hidden shadow-sm transition-all hover:shadow-lg hover:scale-105" style="border: 1.5px solid {artOpen ? 'var(--accent)' : 'var(--warm-200)'};">
+                            <img src={imgUrl(art.bildId, 200)} alt="" class="w-full h-full object-cover" loading="lazy"
+                              onerror={(e) => { (e.currentTarget as HTMLImageElement).parentElement!.style.display='none'; }} />
+                          </div>
+                          <div class="mt-1.5 text-center">
+                            <p class="text-[10px] font-medium tabular-nums" style="color: var(--warm-700);">{fmtEUR(art.umsatz)}</p>
+                            <p class="text-[9px] tabular-nums" style="color: var(--warm-400);">{fmtNum(art.anzahl)} Stk</p>
+                          </div>
                         </div>
-                        <div class="mt-1.5 text-center">
-                          <p class="text-[10px] font-medium tabular-nums" style="color: var(--warm-700);">{fmtEUR(art.umsatz)}</p>
-                          <p class="text-[9px] tabular-nums" style="color: var(--warm-400);">{fmtNum(art.anzahl)} Stk</p>
-                        </div>
+
+                        <!-- Expanded: Sales Detail -->
+                        {#if artOpen}
+                          <div class="mt-2 w-52 sm:w-64 rounded-xl p-3 shadow-md" style="background: white; border: 1px solid var(--warm-200);">
+                            <div class="flex items-center gap-2 mb-2">
+                              <!-- svelte-ignore a11y_click_events_have_key_events -->
+                              <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+                              <img src={imgUrl(art.bildId, 60)} alt="" class="w-7 h-7 rounded object-cover cursor-pointer"
+                                onclick={(e) => { e.stopPropagation(); lightboxUrl = imgUrl(art.bildId, 1000); }} />
+                              <div>
+                                <p class="text-[10px] font-semibold" style="color: var(--warm-700);">{fmtEUR(art.umsatz)} · {fmtNum(art.anzahl)} Stk</p>
+                                <p class="text-[9px]" style="color: var(--warm-400);">{art.sales.length} Verkäufe</p>
+                              </div>
+                            </div>
+                            <div class="space-y-0" style="max-height: 200px; overflow-y: auto;">
+                              <div class="grid grid-cols-[1fr_auto_auto] gap-x-3 gap-y-0.5 text-[10px]">
+                                <span class="font-semibold" style="color: var(--warm-400);">Datum</span>
+                                <span class="font-semibold text-right" style="color: var(--warm-400);">Stk</span>
+                                <span class="font-semibold text-right" style="color: var(--warm-400);">Kasse</span>
+                                {#each art.sales as sale}
+                                  <span style="color: var(--warm-600);">{sale.wochentag}, {sale.monat} KW{sale.kw}</span>
+                                  <span class="text-right tabular-nums" style="color: var(--warm-700);">{fmtNum(sale.anzahl)}</span>
+                                  <span class="text-right truncate" style="color: var(--warm-500); max-width: 80px;" title={sale.kasse}>{sale.kasse}</span>
+                                {/each}
+                              </div>
+                            </div>
+                          </div>
+                        {/if}
                       </div>
                     {/each}
                   </div>
