@@ -1,66 +1,55 @@
 <script lang="ts">
   import { onMount } from 'svelte';
 
+  // ─── Types ───
   interface RawRow {
-    Kollektion: string;
-    BildId: string;
-    Anzahl: number;
-    EinzelPreis: number;
-    Umsatz: number;
-    Art: string;
-    Form: string;
-    Nr: string;
-    SubKollektion: string;
-    Kasse: string;
-    Monat: string;
-    KW: string;
-    Wochentag: string;
+    Kollektion: string; BildId: string; Anzahl: number; EinzelPreis: number;
+    Umsatz: number; Art: string; Form: string; Nr: string; SubKollektion: string;
+    Kasse: string; Monat: string; KW: string; Wochentag: string;
   }
 
-  interface Sale {
-    monat: string;
-    kw: string;
-    wochentag: string;
-    kasse: string;
-    anzahl: number;
-    umsatz: number;
-    einzelPreis: number;
+  interface KasseStat { kasse: string; anzahl: number; }
+
+  interface ArticleNode {
+    bildId: string; umsatz: number; anzahl: number;
+    kassenStats: KasseStat[];
   }
 
-  interface Article {
-    bildId: string;
-    umsatz: number;
-    anzahl: number;
-    sales: Sale[];
+  interface GroupNode {
+    name: string; thumbBildId: string; umsatz: number; anzahl: number;
+    avgPreis: number; anteil: number;
+    articles: ArticleNode[];           // leaf articles
+    subGroups?: GroupNode[];           // optional mid-level (Kollektionen inside Form/Art)
   }
 
-  interface Collection {
-    name: string;
-    thumbBildId: string;
-    umsatz: number;
-    anzahl: number;
-    avgPreis: number;
-    anteil: number;
-    articles: Article[];
-  }
+  type TabId = 'kollektion' | 'form' | 'art';
 
+  // ─── State ───
+  let allData: RawRow[] = $state([]);
   let loading = $state(true);
-  let collections = $state<Collection[]>([]);
+  let activeTab = $state<TabId>('kollektion');
+
+  // Pre-aggregated data per tab
+  let tabData = $state<Record<TabId, GroupNode[]>>({ kollektion: [], form: [], art: [] });
   let totalUmsatz = $state(0);
   let totalAnzahl = $state(0);
-  let expandedSet = $state(new Set<string>());
-  let expandedArticles = $state(new Set<string>()); // "kollektion::bildId"
-  let articleSortMode = $state(new Map<string, 'umsatz' | 'anzahl'>()); // per collection
+
+  // UI state
+  let expandedL1 = $state(new Set<string>());
+  let expandedL2 = $state(new Set<string>());
+  let expandedArticles = $state(new Set<string>());
+  let subGroupSort = $state(new Map<string, 'umsatz' | 'anzahl'>());
+  let articleSort = $state(new Map<string, 'umsatz' | 'anzahl'>());
   let searchTerm = $state('');
   let sortKey = $state<'umsatz' | 'anzahl' | 'avgPreis' | 'name' | 'anteil'>('umsatz');
   let sortDir = $state<'asc' | 'desc'>('desc');
   let lightboxUrl = $state('');
 
-  // KW sort order for "newest first": higher KW = newer
-  const monatOrder: Record<string, number> = { Jan: 1, Feb: 2, Mär: 3, Mar: 3, Apr: 4, Mai: 5, May: 5, Jun: 6, Jul: 7, Aug: 8, Sep: 9, Okt: 10, Oct: 10, Nov: 11, Dez: 12, Dec: 12 };
+  // ─── Derived ───
+  let currentGroups = $derived(tabData[activeTab]);
 
   let filtered = $derived.by(() => {
-    let list = collections;
+    let list = currentGroups;
     if (searchTerm) {
       const t = searchTerm.toLowerCase();
       list = list.filter(c => c.name.toLowerCase().includes(t));
@@ -74,299 +63,319 @@
     return list;
   });
 
+  // ─── Helpers ───
   function imgUrl(bid: string | number, size = 200): string {
     const id = typeof bid === 'number' ? Math.round(bid) : bid;
     return `https://konplott-cdn.com/mytism/image/${id}/${id}.jpg?width=${size}&height=${size}&box=true`;
   }
+  function fmtEUR(v: number) { return v.toLocaleString('de-DE', { style: 'currency', currency: 'EUR' }); }
+  function fmtNum(v: number) { return v.toLocaleString('de-DE', { maximumFractionDigits: 0 }); }
+  function fmtPct(v: number) { return v.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + ' %'; }
 
-  function fmtEUR(v: number): string { return v.toLocaleString('de-DE', { style: 'currency', currency: 'EUR' }); }
-  function fmtNum(v: number): string { return v.toLocaleString('de-DE', { maximumFractionDigits: 0 }); }
-  function fmtPct(v: number): string { return v.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + ' %'; }
-
-  function toggleExpand(name: string) {
-    const s = new Set(expandedSet);
-    if (s.has(name)) s.delete(name); else s.add(name);
-    expandedSet = s;
-  }
-
-  function toggleArticle(colName: string, bildId: string) {
-    const key = `${colName}::${bildId}`;
-    const s = new Set(expandedArticles);
+  function toggleSet(set: Set<string>, key: string): Set<string> {
+    const s = new Set(set);
     if (s.has(key)) s.delete(key); else s.add(key);
-    expandedArticles = s;
+    return s;
   }
-
-  function getArticleSort(colName: string): 'umsatz' | 'anzahl' {
-    return articleSortMode.get(colName) || 'umsatz';
-  }
-
-  function setArticleSort(colName: string, mode: 'umsatz' | 'anzahl') {
-    const m = new Map(articleSortMode);
-    m.set(colName, mode);
-    articleSortMode = m;
-  }
-
-  function sortedArticles(col: Collection): Article[] {
-    const mode = getArticleSort(col.name);
-    return [...col.articles].sort((a, b) => mode === 'umsatz' ? b.umsatz - a.umsatz : b.anzahl - a.anzahl);
-  }
+  function getMapVal(map: Map<string, 'umsatz' | 'anzahl'>, key: string) { return map.get(key) || 'umsatz'; }
+  function setMapVal(map: Map<string, 'umsatz' | 'anzahl'>, key: string, v: 'umsatz' | 'anzahl') { const m = new Map(map); m.set(key, v); return m; }
 
   function setSort(key: typeof sortKey) {
     if (sortKey === key) sortDir = sortDir === 'desc' ? 'asc' : 'desc';
     else { sortKey = key; sortDir = 'desc'; }
   }
 
+  function switchTab(t: TabId) {
+    activeTab = t;
+    expandedL1 = new Set(); expandedL2 = new Set(); expandedArticles = new Set();
+    searchTerm = '';
+  }
+
+  function sortItems<T extends { umsatz: number; anzahl: number }>(items: T[], mode: 'umsatz' | 'anzahl'): T[] {
+    return [...items].sort((a, b) => mode === 'umsatz' ? b.umsatz - a.umsatz : b.anzahl - a.anzahl);
+  }
+
+  // ─── Build articles from raw rows ───
+  function buildArticles(rows: RawRow[], total: number): ArticleNode[] {
+    const artMap = new Map<string, { umsatz: number; anzahl: number; kassen: Map<string, number> }>();
+    for (const r of rows) {
+      const bid = String(r.BildId);
+      if (!bid || bid === '0') continue;
+      if (!artMap.has(bid)) artMap.set(bid, { umsatz: 0, anzahl: 0, kassen: new Map() });
+      const a = artMap.get(bid)!;
+      const an = Number(r.Anzahl) || 0;
+      a.umsatz += (Number(r.EinzelPreis) || 0) * an;
+      a.anzahl += an;
+      a.kassen.set(r.Kasse, (a.kassen.get(r.Kasse) || 0) + an);
+    }
+    return Array.from(artMap.entries()).map(([bildId, a]) => ({
+      bildId, umsatz: a.umsatz, anzahl: a.anzahl,
+      kassenStats: Array.from(a.kassen.entries()).map(([kasse, anzahl]) => ({ kasse, anzahl })).sort((x, y) => y.anzahl - x.anzahl),
+    })).sort((a, b) => b.umsatz - a.umsatz);
+  }
+
+  function buildGroup(name: string, rows: RawRow[], total: number, subGroupField?: string): GroupNode {
+    let umsatz = 0, anzahl = 0;
+    for (const r of rows) { const an = Number(r.Anzahl) || 0; umsatz += (Number(r.EinzelPreis) || 0) * an; anzahl += an; }
+    const articles = buildArticles(rows, total);
+    const node: GroupNode = {
+      name, thumbBildId: articles[0]?.bildId || '',
+      umsatz, anzahl, avgPreis: anzahl > 0 ? umsatz / anzahl : 0,
+      anteil: total > 0 ? (umsatz / total) * 100 : 0, articles,
+    };
+    if (subGroupField) {
+      const subMap = new Map<string, RawRow[]>();
+      for (const r of rows) { const k = (r as any)[subGroupField] || '(leer)'; if (!subMap.has(k)) subMap.set(k, []); subMap.get(k)!.push(r); }
+      node.subGroups = Array.from(subMap.entries())
+        .map(([sn, sr]) => buildGroup(sn, sr, total))
+        .sort((a, b) => b.umsatz - a.umsatz);
+    }
+    return node;
+  }
+
+  // ─── Init ───
   onMount(async () => {
     const res = await fetch('/data.json');
-    const data: RawRow[] = await res.json();
+    allData = await res.json();
 
-    // Aggregate by Kollektion → Article (BildId) → Sales
-    const map = new Map<string, { umsatz: number; anzahl: number; articles: Map<string, { umsatz: number; anzahl: number; sales: Sale[] }> }>();
-
-    for (const r of data) {
-      const k = r.Kollektion;
-      if (!map.has(k)) map.set(k, { umsatz: 0, anzahl: 0, articles: new Map() });
-      const col = map.get(k)!;
-      const ep = Number(r.EinzelPreis) || 0;
-      const an = Number(r.Anzahl) || 0;
-      const lineUmsatz = ep * an;
-      col.umsatz += lineUmsatz;
-      col.anzahl += an;
-
-      const bid = String(r.BildId);
-      if (bid && bid !== '0' && bid !== '') {
-        if (!col.articles.has(bid)) col.articles.set(bid, { umsatz: 0, anzahl: 0, sales: [] });
-        const art = col.articles.get(bid)!;
-        art.umsatz += lineUmsatz;
-        art.anzahl += an;
-        art.sales.push({
-          monat: r.Monat || '',
-          kw: r.KW || '',
-          wochentag: r.Wochentag || '',
-          kasse: r.Kasse || '',
-          anzahl: an,
-          umsatz: lineUmsatz,
-          einzelPreis: ep,
-        });
-      }
-    }
-
-    const total = Array.from(map.values()).reduce((s, c) => s + c.umsatz, 0);
+    let total = 0;
+    for (const r of allData) total += (Number(r.EinzelPreis) || 0) * (Number(r.Anzahl) || 0);
     totalUmsatz = total;
-    totalAnzahl = Array.from(map.values()).reduce((s, c) => s + c.anzahl, 0);
+    totalAnzahl = allData.reduce((s, r) => s + (Number(r.Anzahl) || 0), 0);
 
-    collections = Array.from(map.entries()).map(([name, c]) => {
-      const articles = Array.from(c.articles.entries())
-        .map(([bildId, a]) => {
-          // Sort sales: newest first (by Monat desc, then KW desc)
-          const sorted = [...a.sales].sort((x, y) => {
-            const mx = monatOrder[x.monat] || 0, my = monatOrder[y.monat] || 0;
-            if (my !== mx) return my - mx;
-            return Number(y.kw) - Number(x.kw);
-          });
-          return { bildId, umsatz: a.umsatz, anzahl: a.anzahl, sales: sorted };
-        })
-        .sort((a, b) => b.umsatz - a.umsatz);
+    // Tab 1: by Kollektion
+    const byKoll = new Map<string, RawRow[]>();
+    for (const r of allData) { const k = r.Kollektion; if (!byKoll.has(k)) byKoll.set(k, []); byKoll.get(k)!.push(r); }
+    tabData.kollektion = Array.from(byKoll.entries()).map(([n, rows]) => buildGroup(n, rows, total));
 
-      return {
-        name,
-        thumbBildId: articles[0]?.bildId || '',
-        umsatz: c.umsatz,
-        anzahl: c.anzahl,
-        avgPreis: c.anzahl > 0 ? c.umsatz / c.anzahl : 0,
-        anteil: total > 0 ? (c.umsatz / total) * 100 : 0,
-        articles,
-      };
-    });
+    // Tab 2: by Form → subgroup by Kollektion
+    const byForm = new Map<string, RawRow[]>();
+    for (const r of allData) { const k = r.Form || '(leer)'; if (!byForm.has(k)) byForm.set(k, []); byForm.get(k)!.push(r); }
+    tabData.form = Array.from(byForm.entries()).map(([n, rows]) => buildGroup(n, rows, total, 'Kollektion'));
+
+    // Tab 3: by Art → subgroup by Kollektion
+    const byArt = new Map<string, RawRow[]>();
+    for (const r of allData) { const k = r.Art || '(leer)'; if (!byArt.has(k)) byArt.set(k, []); byArt.get(k)!.push(r); }
+    tabData.art = Array.from(byArt.entries()).map(([n, rows]) => buildGroup(n, rows, total, 'Kollektion'));
 
     loading = false;
   });
+
+  const TABS: { id: TabId; label: string }[] = [
+    { id: 'kollektion', label: 'Auswertung nach Kollektionen' },
+    { id: 'form', label: 'Auswertung nach Form' },
+    { id: 'art', label: 'Auswertung nach Typ' },
+  ];
 </script>
 
 <div class="min-h-screen" style="background: var(--warm-50);">
   <!-- Header -->
   <header class="sticky top-0 z-40 backdrop-blur-xl" style="background: rgba(250,248,245,0.85); border-bottom: 1px solid var(--warm-200);">
-    <div class="max-w-6xl mx-auto px-5 py-4">
-      <div class="flex items-center justify-between gap-4">
+    <div class="max-w-6xl mx-auto px-5 pt-4 pb-0">
+      <div class="flex items-center justify-between gap-4 mb-3">
         <div>
           <h1 class="text-2xl font-semibold tracking-tight" style="font-family: var(--font-display); color: var(--warm-800);">Mirandas Liste</h1>
-          <p class="text-xs mt-0.5" style="color: var(--warm-400);">{fmtNum(filtered.length)} Kollektionen · {fmtEUR(totalUmsatz)} Gesamtumsatz</p>
+          <p class="text-xs mt-0.5" style="color: var(--warm-400);">{fmtNum(filtered.length)} Einträge · {fmtEUR(totalUmsatz)} Gesamtumsatz</p>
         </div>
         <div class="relative">
           <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style="color: var(--warm-400);" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-          <input type="text" bind:value={searchTerm} placeholder="Kollektion suchen..."
-            class="pl-10 pr-4 py-2.5 text-sm rounded-xl w-64 outline-none transition-all"
+          <input type="text" bind:value={searchTerm} placeholder="Suchen..."
+            class="pl-10 pr-4 py-2 text-sm rounded-xl w-56 outline-none transition-all"
             style="border: 1.5px solid var(--warm-200); font-family: var(--font-body); background: white;"
             onfocus={(e) => e.currentTarget.style.borderColor = 'var(--accent)'}
             onblur={(e) => e.currentTarget.style.borderColor = 'var(--warm-200)'} />
         </div>
+      </div>
+      <!-- Tabs -->
+      <div class="flex gap-0 -mb-px">
+        {#each TABS as tab}
+          <button onclick={() => switchTab(tab.id)}
+            class="px-5 py-2.5 text-xs font-medium transition-all border-b-2"
+            style="color: {activeTab === tab.id ? 'var(--accent)' : 'var(--warm-400)'}; border-color: {activeTab === tab.id ? 'var(--accent)' : 'transparent'}; font-family: var(--font-body);">
+            {tab.label}
+          </button>
+        {/each}
       </div>
     </div>
   </header>
 
   {#if loading}
     <div class="flex items-center justify-center h-80">
-      <div class="text-center">
-        <div class="w-10 h-10 rounded-full animate-spin mx-auto mb-4" style="border: 3px solid var(--warm-200); border-top-color: var(--accent);"></div>
-        <p style="color: var(--warm-400);">Daten werden geladen...</p>
-      </div>
+      <div class="w-10 h-10 rounded-full animate-spin mx-auto" style="border: 3px solid var(--warm-200); border-top-color: var(--accent);"></div>
     </div>
   {:else}
     <!-- KPIs -->
     <div class="max-w-6xl mx-auto px-5 pt-5 pb-4">
       <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div class="rounded-xl p-4" style="background: white; border: 1px solid var(--warm-200);">
-          <p class="text-[9px] font-semibold uppercase tracking-[0.15em]" style="color: var(--warm-400);">Umsatz</p>
-          <p class="text-lg font-bold mt-0.5 tabular-nums" style="color: var(--warm-800);">{fmtEUR(totalUmsatz)}</p>
-        </div>
-        <div class="rounded-xl p-4" style="background: white; border: 1px solid var(--warm-200);">
-          <p class="text-[9px] font-semibold uppercase tracking-[0.15em]" style="color: var(--warm-400);">Stück</p>
-          <p class="text-lg font-bold mt-0.5 tabular-nums" style="color: var(--warm-800);">{fmtNum(totalAnzahl)}</p>
-        </div>
-        <div class="rounded-xl p-4" style="background: white; border: 1px solid var(--warm-200);">
-          <p class="text-[9px] font-semibold uppercase tracking-[0.15em]" style="color: var(--warm-400);">Kollektionen</p>
-          <p class="text-lg font-bold mt-0.5" style="color: var(--warm-800);">{fmtNum(collections.length)}</p>
-        </div>
-        <div class="rounded-xl p-4" style="background: white; border: 1px solid var(--warm-200);">
-          <p class="text-[9px] font-semibold uppercase tracking-[0.15em]" style="color: var(--warm-400);">⌀ Preis</p>
-          <p class="text-lg font-bold mt-0.5 tabular-nums" style="color: var(--warm-800);">{fmtEUR(totalAnzahl > 0 ? totalUmsatz / totalAnzahl : 0)}</p>
-        </div>
+        <div class="rounded-xl p-4" style="background: white; border: 1px solid var(--warm-200);"><p class="text-[9px] font-semibold uppercase tracking-[0.15em]" style="color: var(--warm-400);">Umsatz</p><p class="text-lg font-bold mt-0.5 tabular-nums" style="color: var(--warm-800);">{fmtEUR(totalUmsatz)}</p></div>
+        <div class="rounded-xl p-4" style="background: white; border: 1px solid var(--warm-200);"><p class="text-[9px] font-semibold uppercase tracking-[0.15em]" style="color: var(--warm-400);">Stück</p><p class="text-lg font-bold mt-0.5 tabular-nums" style="color: var(--warm-800);">{fmtNum(totalAnzahl)}</p></div>
+        <div class="rounded-xl p-4" style="background: white; border: 1px solid var(--warm-200);"><p class="text-[9px] font-semibold uppercase tracking-[0.15em]" style="color: var(--warm-400);">Einträge</p><p class="text-lg font-bold mt-0.5" style="color: var(--warm-800);">{fmtNum(currentGroups.length)}</p></div>
+        <div class="rounded-xl p-4" style="background: white; border: 1px solid var(--warm-200);"><p class="text-[9px] font-semibold uppercase tracking-[0.15em]" style="color: var(--warm-400);">⌀ Preis</p><p class="text-lg font-bold mt-0.5 tabular-nums" style="color: var(--warm-800);">{fmtEUR(totalAnzahl > 0 ? totalUmsatz / totalAnzahl : 0)}</p></div>
       </div>
     </div>
 
     <!-- Table -->
     <div class="max-w-6xl mx-auto px-5 pb-10">
       <div class="rounded-2xl overflow-hidden" style="background: white; border: 1px solid var(--warm-200); box-shadow: 0 4px 20px rgba(0,0,0,0.03);">
-        <!-- Column Headers -->
+        <!-- Headers -->
         <div class="grid items-center gap-2 px-5 py-3" style="grid-template-columns: 56px 1fr repeat(4, minmax(90px, auto)); border-bottom: 2px solid var(--warm-200); background: var(--warm-100);">
           <div></div>
-          <button onclick={() => setSort('name')} class="text-left text-[10px] font-semibold uppercase tracking-[0.12em] cursor-pointer hover:opacity-70 transition-opacity" style="color: var(--warm-500);">
-            Kollektion {sortKey === 'name' ? (sortDir === 'desc' ? '↓' : '↑') : ''}
-          </button>
-          <button onclick={() => setSort('umsatz')} class="text-right text-[10px] font-semibold uppercase tracking-[0.12em] cursor-pointer hover:opacity-70 transition-opacity" style="color: var(--warm-500);">
-            Umsatz {sortKey === 'umsatz' ? (sortDir === 'desc' ? '↓' : '↑') : ''}
-          </button>
-          <button onclick={() => setSort('anzahl')} class="text-right text-[10px] font-semibold uppercase tracking-[0.12em] cursor-pointer hover:opacity-70 transition-opacity" style="color: var(--warm-500);">
-            Stück {sortKey === 'anzahl' ? (sortDir === 'desc' ? '↓' : '↑') : ''}
-          </button>
-          <button onclick={() => setSort('avgPreis')} class="text-right text-[10px] font-semibold uppercase tracking-[0.12em] cursor-pointer hover:opacity-70 transition-opacity" style="color: var(--warm-500);">
-            ⌀ Preis {sortKey === 'avgPreis' ? (sortDir === 'desc' ? '↓' : '↑') : ''}
-          </button>
-          <button onclick={() => setSort('anteil')} class="text-right text-[10px] font-semibold uppercase tracking-[0.12em] cursor-pointer hover:opacity-70 transition-opacity" style="color: var(--warm-500);">
-            Anteil {sortKey === 'anteil' ? (sortDir === 'desc' ? '↓' : '↑') : ''}
-          </button>
+          {#each [['name','Name'],['umsatz','Umsatz'],['anzahl','Stück'],['avgPreis','⌀ Preis'],['anteil','Anteil']] as [k, label]}
+            <button onclick={() => setSort(k as any)} class="text-[10px] font-semibold uppercase tracking-[0.12em] cursor-pointer hover:opacity-70 transition-opacity {k === 'name' ? 'text-left' : 'text-right'}" style="color: var(--warm-500);">
+              {label} {sortKey === k ? (sortDir === 'desc' ? '↓' : '↑') : ''}
+            </button>
+          {/each}
         </div>
 
-        <!-- Rows -->
+        <!-- L1 Rows -->
         <div class="divide-y" style="border-color: var(--warm-100);">
-          {#each filtered as col (col.name)}
-            {@const isOpen = expandedSet.has(col.name)}
-            {@const artSort = getArticleSort(col.name)}
+          {#each filtered as g1 (g1.name)}
+            {@const l1Open = expandedL1.has(g1.name)}
+            {@const hasSubGroups = !!g1.subGroups && g1.subGroups.length > 0}
             <div>
-              <!-- Collection Row -->
               <!-- svelte-ignore a11y_click_events_have_key_events -->
               <!-- svelte-ignore a11y_no_static_element_interactions -->
               <div class="grid items-center gap-2 px-5 py-3 cursor-pointer transition-colors hover:bg-[var(--warm-100)]/40"
                 style="grid-template-columns: 56px 1fr repeat(4, minmax(90px, auto));"
-                onclick={() => toggleExpand(col.name)}>
+                onclick={() => expandedL1 = toggleSet(expandedL1, g1.name)}>
                 <div class="relative">
-                  {#if col.thumbBildId}
-                    <img src={imgUrl(col.thumbBildId, 100)} alt="" class="w-11 h-11 object-cover rounded-lg shadow-sm" loading="lazy"
-                      onerror={(e) => { (e.currentTarget as HTMLImageElement).style.display='none'; }} />
+                  {#if g1.thumbBildId}
+                    <img src={imgUrl(g1.thumbBildId, 100)} alt="" class="w-11 h-11 object-cover rounded-lg shadow-sm" loading="lazy" onerror={(e) => { (e.currentTarget as HTMLImageElement).style.display='none'; }} />
                   {:else}
-                    <div class="w-11 h-11 rounded-lg flex items-center justify-center" style="background: var(--warm-100);">
-                      <svg class="w-5 h-5" style="color: var(--warm-300);" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-                    </div>
+                    <div class="w-11 h-11 rounded-lg flex items-center justify-center text-xs font-bold" style="background: var(--warm-100); color: var(--warm-400);">{g1.name.slice(0,2)}</div>
                   {/if}
-                  <div class="absolute -right-1 -bottom-1 w-4 h-4 rounded-full flex items-center justify-center text-[8px] transition-transform"
-                    style="background: var(--accent); color: white;" class:rotate-180={isOpen}>▾</div>
+                  <div class="absolute -right-1 -bottom-1 w-4 h-4 rounded-full flex items-center justify-center text-[8px] transition-transform" style="background: var(--accent); color: white;" class:rotate-180={l1Open}>▾</div>
                 </div>
                 <div class="min-w-0">
-                  <p class="text-sm font-medium truncate" style="color: var(--warm-800);">{col.name}</p>
-                  <p class="text-[10px]" style="color: var(--warm-400);">{col.articles.length} Artikel</p>
+                  <p class="text-sm font-medium truncate" style="color: var(--warm-800);">{g1.name}</p>
+                  <p class="text-[10px]" style="color: var(--warm-400);">{hasSubGroups ? `${g1.subGroups?.length} Kollektionen · ` : ''}{g1.articles.length} Artikel</p>
                 </div>
-                <p class="text-sm text-right tabular-nums font-medium" style="color: var(--warm-700);">{fmtEUR(col.umsatz)}</p>
-                <p class="text-sm text-right tabular-nums" style="color: var(--warm-600);">{fmtNum(col.anzahl)}</p>
-                <p class="text-sm text-right tabular-nums" style="color: var(--warm-600);">{fmtEUR(col.avgPreis)}</p>
+                <p class="text-sm text-right tabular-nums font-medium" style="color: var(--warm-700);">{fmtEUR(g1.umsatz)}</p>
+                <p class="text-sm text-right tabular-nums" style="color: var(--warm-600);">{fmtNum(g1.anzahl)}</p>
+                <p class="text-sm text-right tabular-nums" style="color: var(--warm-600);">{fmtEUR(g1.avgPreis)}</p>
                 <div class="text-right">
-                  <p class="text-sm tabular-nums font-medium" style="color: var(--accent);">{fmtPct(col.anteil)}</p>
-                  <div class="w-full h-1 rounded-full mt-1 overflow-hidden" style="background: var(--warm-100);">
-                    <div class="h-full rounded-full transition-all" style="width: {Math.min(col.anteil * 3, 100)}%; background: var(--accent);"></div>
-                  </div>
+                  <p class="text-sm tabular-nums font-medium" style="color: var(--accent);">{fmtPct(g1.anteil)}</p>
+                  <div class="w-full h-1 rounded-full mt-1 overflow-hidden" style="background: var(--warm-100);"><div class="h-full rounded-full" style="width: {Math.min(g1.anteil * 3, 100)}%; background: var(--accent);"></div></div>
                 </div>
               </div>
 
-              <!-- Expanded: Article Gallery -->
-              {#if isOpen}
+              {#if l1Open}
                 <div class="px-5 pb-5 pt-3" style="background: var(--warm-100); border-top: 1px solid var(--warm-200);">
-                  <!-- Sort Toggle -->
-                  <div class="flex items-center gap-3 mb-4">
-                    <p class="text-[10px] font-semibold uppercase tracking-[0.12em]" style="color: var(--warm-400);">Verkaufte Artikel — sortiert nach</p>
-                    <div class="flex rounded-lg overflow-hidden" style="border: 1px solid var(--warm-200);">
-                      <button onclick={() => setArticleSort(col.name, 'umsatz')}
-                        class="px-3 py-1 text-[11px] font-medium transition-all"
-                        style="background: {artSort === 'umsatz' ? 'var(--accent)' : 'white'}; color: {artSort === 'umsatz' ? 'white' : 'var(--warm-500)'};">
-                        Umsatz
-                      </button>
-                      <button onclick={() => setArticleSort(col.name, 'anzahl')}
-                        class="px-3 py-1 text-[11px] font-medium transition-all"
-                        style="background: {artSort === 'anzahl' ? 'var(--accent)' : 'white'}; color: {artSort === 'anzahl' ? 'white' : 'var(--warm-500)'}; border-left: 1px solid var(--warm-200);">
-                        Anzahl
-                      </button>
+                  {#if hasSubGroups}
+                    <!-- L2: SubGroups (Kollektionen inside Form/Art) -->
+                    {@const sg1Sort = getMapVal(subGroupSort, g1.name)}
+                    <div class="flex items-center gap-3 mb-3">
+                      <p class="text-[10px] font-semibold uppercase tracking-[0.12em]" style="color: var(--warm-400);">Kollektionen — sortiert nach</p>
+                      <div class="flex rounded-lg overflow-hidden" style="border: 1px solid var(--warm-200);">
+                        <button onclick={() => subGroupSort = setMapVal(subGroupSort, g1.name, 'umsatz')} class="px-3 py-1 text-[11px] font-medium" style="background: {sg1Sort === 'umsatz' ? 'var(--accent)' : 'white'}; color: {sg1Sort === 'umsatz' ? 'white' : 'var(--warm-500)'};">Umsatz</button>
+                        <button onclick={() => subGroupSort = setMapVal(subGroupSort, g1.name, 'anzahl')} class="px-3 py-1 text-[11px] font-medium" style="background: {sg1Sort === 'anzahl' ? 'var(--accent)' : 'white'}; color: {sg1Sort === 'anzahl' ? 'white' : 'var(--warm-500)'}; border-left: 1px solid var(--warm-200);">Anzahl</button>
+                      </div>
                     </div>
-                  </div>
-
-                  <!-- Articles -->
-                  <div class="flex flex-wrap gap-3">
-                    {#each sortedArticles(col) as art}
-                      {@const artKey = `${col.name}::${art.bildId}`}
-                      {@const artOpen = expandedArticles.has(artKey)}
-                      <div class="flex flex-col">
-                        <!-- Article Card -->
-                        <!-- svelte-ignore a11y_click_events_have_key_events -->
-                        <!-- svelte-ignore a11y_no_static_element_interactions -->
-                        <div class="cursor-pointer transition-all" class:ring-2={artOpen} class:ring-amber-400={artOpen} class:rounded-xl={true}
-                          onclick={(e) => { e.stopPropagation(); toggleArticle(col.name, art.bildId); }}>
-                          <div class="w-20 h-20 sm:w-24 sm:h-24 rounded-xl overflow-hidden shadow-sm transition-all hover:shadow-lg hover:scale-105" style="border: 1.5px solid {artOpen ? 'var(--accent)' : 'var(--warm-200)'};">
-                            <img src={imgUrl(art.bildId, 200)} alt="" class="w-full h-full object-cover" loading="lazy"
-                              onerror={(e) => { (e.currentTarget as HTMLImageElement).parentElement!.style.display='none'; }} />
-                          </div>
-                          <div class="mt-1.5 text-center">
-                            <p class="text-[10px] font-medium tabular-nums" style="color: var(--warm-700);">{fmtEUR(art.umsatz)}</p>
-                            <p class="text-[9px] tabular-nums" style="color: var(--warm-400);">{fmtNum(art.anzahl)} Stk</p>
-                          </div>
-                        </div>
-
-                        <!-- Expanded: Sales Detail -->
-                        {#if artOpen}
-                          <div class="mt-2 w-52 sm:w-64 rounded-xl p-3 shadow-md" style="background: white; border: 1px solid var(--warm-200);">
-                            <div class="flex items-center gap-2 mb-2">
-                              <!-- svelte-ignore a11y_click_events_have_key_events -->
-                              <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-                              <img src={imgUrl(art.bildId, 60)} alt="" class="w-7 h-7 rounded object-cover cursor-pointer"
-                                onclick={(e) => { e.stopPropagation(); lightboxUrl = imgUrl(art.bildId, 1000); }} />
-                              <div>
-                                <p class="text-[10px] font-semibold" style="color: var(--warm-700);">{fmtEUR(art.umsatz)} · {fmtNum(art.anzahl)} Stk</p>
-                                <p class="text-[9px]" style="color: var(--warm-400);">{art.sales.length} Verkäufe</p>
-                              </div>
+                    <div class="space-y-1">
+                      {#each sortItems(g1.subGroups || [], sg1Sort) as sg (sg.name)}
+                        {@const l2Key = `${g1.name}::${sg.name}`}
+                        {@const l2Open = expandedL2.has(l2Key)}
+                        <div class="rounded-xl overflow-hidden" style="border: 1px solid var(--warm-200); background: white;">
+                          <!-- svelte-ignore a11y_click_events_have_key_events -->
+                          <!-- svelte-ignore a11y_no_static_element_interactions -->
+                          <div class="flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-[var(--warm-50)] transition-colors"
+                            onclick={() => expandedL2 = toggleSet(expandedL2, l2Key)}>
+                            {#if sg.thumbBildId}
+                              <img src={imgUrl(sg.thumbBildId, 80)} alt="" class="w-9 h-9 object-cover rounded-lg" loading="lazy" onerror={(e) => { (e.currentTarget as HTMLImageElement).style.display='none'; }} />
+                            {:else}
+                              <div class="w-9 h-9 rounded-lg flex items-center justify-center text-[9px] font-bold" style="background: var(--warm-100); color: var(--warm-400);">{sg.name.slice(0,2)}</div>
+                            {/if}
+                            <div class="flex-1 min-w-0">
+                              <p class="text-xs font-medium truncate" style="color: var(--warm-700);">{sg.name}</p>
+                              <p class="text-[9px]" style="color: var(--warm-400);">{sg.articles.length} Artikel</p>
                             </div>
-                            <div class="space-y-0" style="max-height: 200px; overflow-y: auto;">
-                              <div class="grid grid-cols-[1fr_auto_auto] gap-x-3 gap-y-0.5 text-[10px]">
-                                <span class="font-semibold" style="color: var(--warm-400);">Datum</span>
-                                <span class="font-semibold text-right" style="color: var(--warm-400);">Stk</span>
-                                <span class="font-semibold text-right" style="color: var(--warm-400);">Kasse</span>
-                                {#each art.sales as sale}
-                                  <span style="color: var(--warm-600);">{sale.wochentag}, {sale.monat} KW{sale.kw}</span>
-                                  <span class="text-right tabular-nums" style="color: var(--warm-700);">{fmtNum(sale.anzahl)}</span>
-                                  <span class="text-right truncate" style="color: var(--warm-500); max-width: 80px;" title={sale.kasse}>{sale.kasse}</span>
+                            <p class="text-xs tabular-nums font-medium" style="color: var(--warm-700);">{fmtEUR(sg.umsatz)}</p>
+                            <p class="text-[11px] tabular-nums" style="color: var(--warm-500);">{fmtNum(sg.anzahl)} Stk</p>
+                            <div class="text-[10px] transition-transform" class:rotate-180={l2Open} style="color: var(--accent);">▾</div>
+                          </div>
+                          {#if l2Open}
+                            <!-- Articles inside SubGroup -->
+                            {@const artSortKey = `${l2Key}::art`}
+                            {@const aSort = getMapVal(articleSort, artSortKey)}
+                            <div class="px-4 pb-4 pt-2" style="background: var(--warm-50); border-top: 1px solid var(--warm-100);">
+                              <div class="flex items-center gap-3 mb-3">
+                                <p class="text-[9px] font-semibold uppercase tracking-[0.12em]" style="color: var(--warm-400);">Artikel — sortiert nach</p>
+                                <div class="flex rounded-md overflow-hidden" style="border: 1px solid var(--warm-200);">
+                                  <button onclick={() => articleSort = setMapVal(articleSort, artSortKey, 'umsatz')} class="px-2.5 py-0.5 text-[10px] font-medium" style="background: {aSort === 'umsatz' ? 'var(--accent)' : 'white'}; color: {aSort === 'umsatz' ? 'white' : 'var(--warm-500)'};">Umsatz</button>
+                                  <button onclick={() => articleSort = setMapVal(articleSort, artSortKey, 'anzahl')} class="px-2.5 py-0.5 text-[10px] font-medium" style="background: {aSort === 'anzahl' ? 'var(--accent)' : 'white'}; color: {aSort === 'anzahl' ? 'white' : 'var(--warm-500)'}; border-left: 1px solid var(--warm-200);">Anzahl</button>
+                                </div>
+                              </div>
+                              <div class="flex flex-wrap gap-2.5">
+                                {#each sortItems(sg.articles, aSort) as art}
+                                  {@const aKey = `${l2Key}::${art.bildId}`}
+                                  {@const aOpen = expandedArticles.has(aKey)}
+                                  <div class="flex flex-col">
+                                    <!-- svelte-ignore a11y_click_events_have_key_events -->
+                                    <!-- svelte-ignore a11y_no_static_element_interactions -->
+                                    <div class="cursor-pointer" onclick={(e) => { e.stopPropagation(); expandedArticles = toggleSet(expandedArticles, aKey); }}>
+                                      <div class="w-16 h-16 sm:w-20 sm:h-20 rounded-lg overflow-hidden shadow-sm transition-all hover:shadow-md hover:scale-105" style="border: 1.5px solid {aOpen ? 'var(--accent)' : 'var(--warm-200)'};">
+                                        <img src={imgUrl(art.bildId, 160)} alt="" class="w-full h-full object-cover" loading="lazy" onerror={(e) => { (e.currentTarget as HTMLImageElement).parentElement!.style.display='none'; }} />
+                                      </div>
+                                      <div class="mt-1 text-center"><p class="text-[9px] font-medium tabular-nums" style="color: var(--warm-700);">{fmtEUR(art.umsatz)}</p><p class="text-[8px] tabular-nums" style="color: var(--warm-400);">{fmtNum(art.anzahl)} Stk</p></div>
+                                    </div>
+                                    {#if aOpen}
+                                      <div class="mt-1.5 w-44 rounded-lg p-2.5 shadow-md" style="background: white; border: 1px solid var(--warm-200);">
+                                        <p class="text-[9px] font-semibold mb-1.5" style="color: var(--warm-400);">Verkäufe nach Kasse</p>
+                                        {#each art.kassenStats as ks}
+                                          <div class="flex items-center justify-between py-0.5"><span class="text-[10px] truncate" style="color: var(--warm-600); max-width: 100px;" title={ks.kasse}>{ks.kasse}</span><span class="text-[10px] tabular-nums font-medium" style="color: var(--warm-700);">{fmtNum(ks.anzahl)} Stk</span></div>
+                                        {/each}
+                                      </div>
+                                    {/if}
+                                  </div>
                                 {/each}
                               </div>
                             </div>
-                          </div>
-                        {/if}
+                          {/if}
+                        </div>
+                      {/each}
+                    </div>
+                  {:else}
+                    <!-- Direct Articles (Tab 1: Kollektion) -->
+                    {@const artSortKey = `${g1.name}::art`}
+                    {@const aSort = getMapVal(articleSort, artSortKey)}
+                    <div class="flex items-center gap-3 mb-4">
+                      <p class="text-[10px] font-semibold uppercase tracking-[0.12em]" style="color: var(--warm-400);">Verkaufte Artikel — sortiert nach</p>
+                      <div class="flex rounded-lg overflow-hidden" style="border: 1px solid var(--warm-200);">
+                        <button onclick={() => articleSort = setMapVal(articleSort, artSortKey, 'umsatz')} class="px-3 py-1 text-[11px] font-medium" style="background: {aSort === 'umsatz' ? 'var(--accent)' : 'white'}; color: {aSort === 'umsatz' ? 'white' : 'var(--warm-500)'};">Umsatz</button>
+                        <button onclick={() => articleSort = setMapVal(articleSort, artSortKey, 'anzahl')} class="px-3 py-1 text-[11px] font-medium" style="background: {aSort === 'anzahl' ? 'var(--accent)' : 'white'}; color: {aSort === 'anzahl' ? 'white' : 'var(--warm-500)'}; border-left: 1px solid var(--warm-200);">Anzahl</button>
                       </div>
-                    {/each}
-                  </div>
+                    </div>
+                    <div class="flex flex-wrap gap-3">
+                      {#each sortItems(g1.articles, aSort) as art}
+                        {@const aKey = `${g1.name}::${art.bildId}`}
+                        {@const aOpen = expandedArticles.has(aKey)}
+                        <div class="flex flex-col">
+                          <!-- svelte-ignore a11y_click_events_have_key_events -->
+                          <!-- svelte-ignore a11y_no_static_element_interactions -->
+                          <div class="cursor-pointer" onclick={(e) => { e.stopPropagation(); expandedArticles = toggleSet(expandedArticles, aKey); }}>
+                            <div class="w-20 h-20 sm:w-24 sm:h-24 rounded-xl overflow-hidden shadow-sm transition-all hover:shadow-lg hover:scale-105" style="border: 1.5px solid {aOpen ? 'var(--accent)' : 'var(--warm-200)'};">
+                              <img src={imgUrl(art.bildId, 200)} alt="" class="w-full h-full object-cover" loading="lazy" onerror={(e) => { (e.currentTarget as HTMLImageElement).parentElement!.style.display='none'; }} />
+                            </div>
+                            <div class="mt-1.5 text-center"><p class="text-[10px] font-medium tabular-nums" style="color: var(--warm-700);">{fmtEUR(art.umsatz)}</p><p class="text-[9px] tabular-nums" style="color: var(--warm-400);">{fmtNum(art.anzahl)} Stk</p></div>
+                          </div>
+                          {#if aOpen}
+                            <div class="mt-2 w-52 sm:w-60 rounded-xl p-3 shadow-md" style="background: white; border: 1px solid var(--warm-200);">
+                              <div class="flex items-center gap-2 mb-2">
+                                <!-- svelte-ignore a11y_click_events_have_key_events -->
+                                <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+                                <img src={imgUrl(art.bildId, 60)} alt="" class="w-7 h-7 rounded object-cover cursor-pointer" onclick={(e) => { e.stopPropagation(); lightboxUrl = imgUrl(art.bildId, 1000); }} />
+                                <div><p class="text-[10px] font-semibold" style="color: var(--warm-700);">{fmtEUR(art.umsatz)} · {fmtNum(art.anzahl)} Stk</p></div>
+                              </div>
+                              <p class="text-[9px] font-semibold mb-1.5" style="color: var(--warm-400);">Verkäufe nach Kasse</p>
+                              {#each art.kassenStats as ks}
+                                <div class="flex items-center justify-between py-0.5"><span class="text-[10px] truncate" style="color: var(--warm-600); max-width: 120px;" title={ks.kasse}>{ks.kasse}</span><span class="text-[10px] tabular-nums font-medium" style="color: var(--warm-700);">{fmtNum(ks.anzahl)} Stk</span></div>
+                              {/each}
+                            </div>
+                          {/if}
+                        </div>
+                      {/each}
+                    </div>
+                  {/if}
                 </div>
               {/if}
             </div>
@@ -381,10 +390,8 @@
 {#if lightboxUrl}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-md" style="background: rgba(31,26,18,0.7);"
-    onclick={() => lightboxUrl = ''}>
+  <div class="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-md" style="background: rgba(31,26,18,0.7);" onclick={() => lightboxUrl = ''}>
     <img src={lightboxUrl} alt="Produkt" class="max-w-[90vw] max-h-[90vh] rounded-2xl shadow-2xl" />
-    <button class="absolute top-6 right-6 w-10 h-10 rounded-full flex items-center justify-center text-white text-xl" style="background: rgba(0,0,0,0.4);"
-      onclick={() => lightboxUrl = ''}>✕</button>
+    <button class="absolute top-6 right-6 w-10 h-10 rounded-full flex items-center justify-center text-white text-xl" style="background: rgba(0,0,0,0.4);" onclick={() => lightboxUrl = ''}>✕</button>
   </div>
 {/if}
