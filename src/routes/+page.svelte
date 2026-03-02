@@ -45,10 +45,11 @@
       const t = searchTerm.toLowerCase();
       list = list.filter(c => c.name.toLowerCase().includes(t));
     }
-    const dir = sortDir === 'desc' ? -1 : 1;
     list = [...list].sort((a, b) => {
-      if (sortKey === 'name') return dir * -1 * a.name.localeCompare(b.name, 'de');
-      return dir * ((b as any)[sortKey] - (a as any)[sortKey]);
+      let cmp: number;
+      if (sortKey === 'name') cmp = a.name.localeCompare(b.name, 'de');
+      else cmp = (a as any)[sortKey] - (b as any)[sortKey];
+      return sortDir === 'desc' ? -cmp : cmp;
     });
     return list;
   });
