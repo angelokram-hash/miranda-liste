@@ -22,7 +22,7 @@
     subGroups?: GroupNode[];           // optional mid-level (Kollektionen inside Form/Art)
   }
 
-  type TabId = 'kollektion' | 'form' | 'art';
+  type TabId = 'kollektion' | 'form' | 'art' | 'formpfad' | 'preis';
 
   // ─── State ───
   let allData: RawRow[] = $state([]);
@@ -30,7 +30,10 @@
   let activeTab = $state<TabId>('kollektion');
 
   // Pre-aggregated data per tab
-  let tabData = $state<Record<TabId, GroupNode[]>>({ kollektion: [], form: [], art: [] });
+  let tabData = $state<Record<TabId, GroupNode[]>>({ kollektion: [], form: [], art: [], formpfad: [], preis: [] });
+  // For Preis tab: two sub-modes
+  let preisSubTab = $state<'formpfad' | 'kollektion'>('formpfad');
+  let preisData = $state<Record<'formpfad' | 'kollektion', GroupNode[]>>({ formpfad: [], kollektion: [] });
   let totalUmsatz = $state(0);
   let totalAnzahl = $state(0);
 
@@ -47,7 +50,7 @@
   let lightboxUrl = $state('');
 
   // ─── Derived ───
-  let currentGroups = $derived(tabData[activeTab]);
+  let currentGroups = $derived(activeTab === 'preis' ? preisData[preisSubTab] : tabData[activeTab]);
 
   let filtered = $derived.by(() => {
     let list = currentGroups;
@@ -151,7 +154,17 @@
     for (const r of allData) { const k = r.Kollektion; if (!byKoll.has(k)) byKoll.set(k, []); byKoll.get(k)!.push(r); }
     tabData.kollektion = Array.from(byKoll.entries()).map(([n, rows]) => buildGroup(n, rows, total));
 
-    // Tab 2: by FormPfad (first word of Form) → Form → Kollektion
+    // Tab 2: by Form → Kollektion
+    const byForm = new Map<string, RawRow[]>();
+    for (const r of allData) { const k = r.Form || '(leer)'; if (!byForm.has(k)) byForm.set(k, []); byForm.get(k)!.push(r); }
+    tabData.form = Array.from(byForm.entries()).map(([n, rows]) => buildGroup(n, rows, total, ['Kollektion']));
+
+    // Tab 3: by Art → subgroup by Kollektion
+    const byArt = new Map<string, RawRow[]>();
+    for (const r of allData) { const k = r.Art || '(leer)'; if (!byArt.has(k)) byArt.set(k, []); byArt.get(k)!.push(r); }
+    tabData.art = Array.from(byArt.entries()).map(([n, rows]) => buildGroup(n, rows, total, ['Kollektion']));
+
+    // Tab 4: by FormPfad (first word of Form) → Form → Kollektion
     const byFormPfad = new Map<string, RawRow[]>();
     for (const r of allData) {
       const form = (r.Form || '').trim();
@@ -159,20 +172,47 @@
       if (!byFormPfad.has(pfad)) byFormPfad.set(pfad, []);
       byFormPfad.get(pfad)!.push(r);
     }
-    tabData.form = Array.from(byFormPfad.entries()).map(([n, rows]) => buildGroup(n, rows, total, ['Form', 'Kollektion']));
+    tabData.formpfad = Array.from(byFormPfad.entries()).map(([n, rows]) => buildGroup(n, rows, total, ['Form', 'Kollektion']));
 
-    // Tab 3: by Art → subgroup by Kollektion
-    const byArt = new Map<string, RawRow[]>();
-    for (const r of allData) { const k = r.Art || '(leer)'; if (!byArt.has(k)) byArt.set(k, []); byArt.get(k)!.push(r); }
-    tabData.art = Array.from(byArt.entries()).map(([n, rows]) => buildGroup(n, rows, total, ['Kollektion']));
+    // Tab 5: by Preisgruppe → FormPfad OR Kollektion
+    const preisRanges: [string, number, number][] = [
+      ['0 – 20 €', 0, 20], ['20 – 50 €', 20, 50], ['50 – 120 €', 50, 120],
+      ['120 – 250 €', 120, 250], ['über 250 €', 250, Infinity],
+    ];
+    function getPreisgruppe(ep: number): string {
+      for (const [label, lo, hi] of preisRanges) { if (ep >= lo && ep < hi) return label; }
+      return 'über 250 €';
+    }
+    // Build both variants for preis tab
+    const byPreisFP = new Map<string, RawRow[]>();
+    const byPreisKoll = new Map<string, RawRow[]>();
+    for (const r of allData) {
+      const pg = getPreisgruppe(Number(r.EinzelPreis) || 0);
+      if (!byPreisFP.has(pg)) byPreisFP.set(pg, []);
+      byPreisFP.get(pg)!.push(r);
+      if (!byPreisKoll.has(pg)) byPreisKoll.set(pg, []);
+      byPreisKoll.get(pg)!.push(r);
+    }
+    // Sort by price range order
+    const preisOrder = preisRanges.map(p => p[0]);
+    preisData.formpfad = preisOrder
+      .filter(p => byPreisFP.has(p))
+      .map(p => buildGroup(p, byPreisFP.get(p)!, total, ['Form', 'Kollektion']));
+    preisData.kollektion = preisOrder
+      .filter(p => byPreisKoll.has(p))
+      .map(p => buildGroup(p, byPreisKoll.get(p)!, total, ['Kollektion']));
+    // Also set tabData.preis to default (will use preisData via currentGroups)
+    tabData.preis = preisData.formpfad;
 
     loading = false;
   });
 
   const TABS: { id: TabId; label: string }[] = [
-    { id: 'kollektion', label: 'Auswertung nach Kollektionen' },
-    { id: 'form', label: 'Auswertung nach Form' },
-    { id: 'art', label: 'Auswertung nach Typ' },
+    { id: 'kollektion', label: 'Kollektionen' },
+    { id: 'form', label: 'Form' },
+    { id: 'art', label: 'Typ' },
+    { id: 'formpfad', label: 'FormPfad' },
+    { id: 'preis', label: 'Preisgruppe' },
   ];
 </script>
 
@@ -195,15 +235,32 @@
         </div>
       </div>
       <!-- Tabs -->
-      <div class="flex gap-0 -mb-px">
+      <div class="flex gap-0 -mb-px overflow-x-auto">
         {#each TABS as tab}
           <button onclick={() => switchTab(tab.id)}
-            class="px-5 py-2.5 text-xs font-medium transition-all border-b-2"
+            class="px-4 py-2.5 text-xs font-medium transition-all border-b-2 whitespace-nowrap"
             style="color: {activeTab === tab.id ? 'var(--accent)' : 'var(--warm-400)'}; border-color: {activeTab === tab.id ? 'var(--accent)' : 'transparent'}; font-family: var(--font-body);">
             {tab.label}
           </button>
         {/each}
       </div>
+      {#if activeTab === 'preis'}
+        <div class="flex items-center gap-2 py-2 border-t" style="border-color: var(--warm-100);">
+          <p class="text-[10px] font-medium" style="color: var(--warm-400);">Aufschlüsseln nach:</p>
+          <div class="flex rounded-lg overflow-hidden" style="border: 1px solid var(--warm-200);">
+            <button onclick={() => { preisSubTab = 'formpfad'; expandedL1 = new Set(); expandedL2 = new Set(); expandedL3 = new Set(); expandedArticles = new Set(); }}
+              class="px-3 py-1 text-[11px] font-medium"
+              style="background: {preisSubTab === 'formpfad' ? 'var(--accent)' : 'white'}; color: {preisSubTab === 'formpfad' ? 'white' : 'var(--warm-500)'};">
+              FormPfad
+            </button>
+            <button onclick={() => { preisSubTab = 'kollektion'; expandedL1 = new Set(); expandedL2 = new Set(); expandedL3 = new Set(); expandedArticles = new Set(); }}
+              class="px-3 py-1 text-[11px] font-medium"
+              style="background: {preisSubTab === 'kollektion' ? 'var(--accent)' : 'white'}; color: {preisSubTab === 'kollektion' ? 'white' : 'var(--warm-500)'}; border-left: 1px solid var(--warm-200);">
+              Kollektion
+            </button>
+          </div>
+        </div>
+      {/if}
     </div>
   </header>
 
