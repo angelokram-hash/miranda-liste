@@ -150,11 +150,17 @@
   });
 
   // Top 4 Kolls pro KW (last 30 KWs)
-  let kwTypFilter = $state<string>('alle');
+  let kwSelectedTypes = $state<Set<string>>(new Set());
+  let kwAllTypes = $derived(kwSelectedTypes.size === 0);
   let kwAvailableTypes = $derived([...new Set(last30KWData.map(r => r.Art).filter(Boolean))].sort());
+  function toggleKwType(typ: string) {
+    const next = new Set(kwSelectedTypes);
+    if (next.has(typ)) next.delete(typ); else next.add(typ);
+    kwSelectedTypes = next;
+  }
   interface KwTop { kw: string; kolls: { name: string; umsatz: number; color: string }[]; }
   let kwTopKolls = $derived.by((): KwTop[] => {
-    const filtered = kwTypFilter === 'alle' ? last30KWData : last30KWData.filter(r => r.Art === kwTypFilter);
+    const filtered = kwAllTypes ? last30KWData : last30KWData.filter(r => kwSelectedTypes.has(r.Art));
     const kwMap = new Map<string, Map<string, number>>();
     for (const r of filtered) { const kw = r.KW; if (!kwMap.has(kw)) kwMap.set(kw, new Map()); kwMap.get(kw)!.set(r.Kollektion, (kwMap.get(kw)!.get(r.Kollektion) || 0) + (Number(r.EinzelPreis) || 0) * (Number(r.Anzahl) || 0)); }
     const allTopKolls = new Set<string>();
@@ -608,13 +614,20 @@
   <div class="rounded-xl p-4" style="background: white; border: 1px solid var(--warm-200);">
     <div class="flex flex-wrap items-center gap-4 mb-3">
       <h3 class="text-xs font-semibold uppercase tracking-[0.15em]" style="color: var(--warm-400);">Top 4 Kollektionen pro KW</h3>
-      <div class="flex items-center gap-2">
-        <span class="text-[9px] font-medium" style="color: var(--warm-400);">Typ:</span>
-        <select bind:value={kwTypFilter} class="text-[10px] py-0.5 px-1.5 rounded-md outline-none" style="border: 1px solid var(--warm-200); background: white; color: var(--warm-700); max-width: 160px;">
-          <option value="alle">Alle</option>
-          {#each kwAvailableTypes as typ}<option value={typ}>{typ}</option>{/each}
-        </select>
-      </div>
+      {#if !kwAllTypes}
+        <!-- svelte-ignore a11y_click_events_have_key_events --><!-- svelte-ignore a11y_no_static_element_interactions -->
+        <span class="text-[10px] cursor-pointer underline" style="color: var(--accent);" onclick={() => kwSelectedTypes = new Set()}>Alle Typen</span>
+      {/if}
+    </div>
+    <div class="flex flex-wrap gap-1.5 mb-3">
+      {#each kwAvailableTypes as typ}
+        <!-- svelte-ignore a11y_click_events_have_key_events --><!-- svelte-ignore a11y_no_static_element_interactions -->
+        <span class="px-2 py-0.5 rounded-full text-[9px] font-medium cursor-pointer transition-opacity"
+          style="background: var(--accent){kwAllTypes || kwSelectedTypes.has(typ) ? '18' : '08'}; color: var(--accent); opacity: {kwAllTypes || kwSelectedTypes.has(typ) ? 1 : 0.3}; border: 1px solid var(--accent){kwAllTypes || kwSelectedTypes.has(typ) ? '40' : '15'};"
+          onclick={() => toggleKwType(typ)}>
+          {typ}
+        </span>
+      {/each}
     </div>
     <div class="overflow-x-auto"><div class="flex gap-3" style="min-width: max-content;">
       {#each kwTopKolls as kwData}
