@@ -4,8 +4,8 @@
     Form: string; FormPfad: string; Kasse: string; Art: string; Nr: string; KW: string; Monat: string; Datum: string;
   }
 
-  let { data = [], compareData = [], allData = [], currentKW = 'alle', availableKWs = [] as string[], onKWChange = (kw: string) => {} }: {
-    data: RawRow[]; compareData: RawRow[]; allData: RawRow[]; currentKW: string; availableKWs: string[]; onKWChange: (kw: string) => void;
+  let { data = [], compareData = [], allData = [], timeUnit = 'woche', periods = [] as string[], currentLabel = '', compareLabel = '' }: {
+    data: RawRow[]; compareData: RawRow[]; allData: RawRow[]; timeUnit: string; periods: string[]; currentLabel: string; compareLabel: string;
   } = $props();
 
   function imgUrl(bid: string, sz: number): string {
@@ -45,14 +45,15 @@
     }
   }
 
-  // KW Navigation
-  let kwIdx = $derived(availableKWs.indexOf(currentKW));
-  let compKWLabel = $derived(kwIdx > 0 ? 'KW ' + availableKWs[kwIdx - 1] : '');
-  function goPrev() { if (kwIdx > 0) onKWChange(availableKWs[kwIdx - 1]); }
-  function goNext() { if (kwIdx < availableKWs.length - 1) onKWChange(availableKWs[kwIdx + 1]); }
-  let hasComp = $derived(compareData.length > 0);
+  const MONAT_ORD = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
+  function periodKey(r: RawRow): string {
+    if (timeUnit === 'tag') return r.Datum;
+    if (timeUnit === 'woche') return r.KW;
+    if (timeUnit === 'monat') return r.Monat;
+    return '2026';
+  }
 
-  // KPIs
+  // ── KPIs ──
   let totalUmsatz = $derived(data.reduce((s, r) => s + (Number(r.EinzelPreis) || 0) * (Number(r.Anzahl) || 0), 0));
   let totalAnzahl = $derived(data.reduce((s, r) => s + (Number(r.Anzahl) || 0), 0));
   let avgPreis = $derived(totalAnzahl > 0 ? totalUmsatz / totalAnzahl : 0);
@@ -141,18 +142,17 @@
     }).sort((a, b) => b.totalUmsatz - a.totalUmsatz).filter(t => t.totalUmsatz > 0);
   });
 
-  // Last 30 KWs from allData
-  let last30KWData = $derived.by(() => {
-    const allKWs = [...new Set(allData.map(r => r.KW))].sort((a, b) => Number(a) - Number(b));
-    const last30 = allKWs.slice(-30);
-    const kwSet = new Set(last30);
-    return allData.filter(r => kwSet.has(r.KW));
-  });
+  // Last 30 periods from allData
+  let last30Periods = $derived(periods.slice(-30));
+  let last30Data = $derived(allData.filter(r => {
+    const s = new Set(last30Periods);
+    return s.has(periodKey(r));
+  }));
 
   // Top 4 Kolls pro KW (last 30 KWs)
   let kwSelectedTypes = $state<Set<string>>(new Set());
   let kwAllTypes = $derived(kwSelectedTypes.size === 0);
-  let kwAvailableTypes = $derived([...new Set(last30KWData.map(r => r.Art).filter(Boolean))].sort());
+  let kwAvailableTypes = $derived([...new Set(last30Data.map(r => r.Art).filter(Boolean))].sort());
   function toggleKwType(typ: string) {
     const next = new Set(kwSelectedTypes);
     if (next.has(typ)) next.delete(typ); else next.add(typ);
@@ -160,9 +160,9 @@
   }
   interface KwTop { kw: string; kolls: { name: string; umsatz: number; color: string }[]; }
   let kwTopKolls = $derived.by((): KwTop[] => {
-    const filtered = kwAllTypes ? last30KWData : last30KWData.filter(r => kwSelectedTypes.has(r.Art));
+    const filtered = kwAllTypes ? last30Data : last30Data.filter(r => kwSelectedTypes.has(r.Art));
     const kwMap = new Map<string, Map<string, number>>();
-    for (const r of filtered) { const kw = r.KW; if (!kwMap.has(kw)) kwMap.set(kw, new Map()); kwMap.get(kw)!.set(r.Kollektion, (kwMap.get(kw)!.get(r.Kollektion) || 0) + (Number(r.EinzelPreis) || 0) * (Number(r.Anzahl) || 0)); }
+    for (const r of filtered) { const kw = periodKey(r); if (!kwMap.has(kw)) kwMap.set(kw, new Map()); kwMap.get(kw)!.set(r.Kollektion, (kwMap.get(kw)!.get(r.Kollektion) || 0) + (Number(r.EinzelPreis) || 0) * (Number(r.Anzahl) || 0)); }
     const allTopKolls = new Set<string>();
     for (const km of kwMap.values()) { for (const [name] of [...km.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4)) allTopKolls.add(name); }
     const kollColorMap = new Map<string, string>(); let ci = 0;
@@ -172,10 +172,10 @@
     }));
   });
 
-  // Shop Umsatzverlauf (last 30 KWs)
+  // Shop Umsatzverlauf (last 30 periods)
   let shopTrend = $derived.by(() => {
     const kwShopMap = new Map<string, Map<string, number>>(); const shopTotals = new Map<string, number>();
-    for (const r of last30KWData) { const kw = r.KW; const shop = r.Kasse; if (!kwShopMap.has(kw)) kwShopMap.set(kw, new Map()); const sm = kwShopMap.get(kw)!;
+    for (const r of last30Data) { const kw = periodKey(r); const shop = r.Kasse; if (!kwShopMap.has(kw)) kwShopMap.set(kw, new Map()); const sm = kwShopMap.get(kw)!;
       const u = (Number(r.EinzelPreis) || 0) * (Number(r.Anzahl) || 0); sm.set(shop, (sm.get(shop) || 0) + u); shopTotals.set(shop, (shopTotals.get(shop) || 0) + u); }
     const topShops = [...shopTotals.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(e => e[0]);
     const kws = [...kwShopMap.keys()].sort((a, b) => Number(a) - Number(b));
@@ -207,18 +207,9 @@
   let tmField = $state<TreemapField>('Kollektion');
   let tmTop20 = $state(false);
   let tmHideSonstige = $state(false);
-  let tmUseLastKW = $state(false);
   interface DrillLevel { label: string; field: string; value: string; }
   let tmDrill = $state<DrillLevel[]>([]);
   interface TmNode { label: string; value: number; bildId: string; drillKey: string; compValue: number; }
-
-  // Letzte KW data for treemap
-  let lastKW = $derived(availableKWs.length > 0 ? availableKWs[availableKWs.length - 1] : '');
-  let prevKW = $derived(availableKWs.length > 1 ? availableKWs[availableKWs.length - 2] : '');
-  let tmData = $derived(tmUseLastKW ? allData.filter(r => r.KW === lastKW) : data);
-  let tmCompData = $derived(tmUseLastKW ? allData.filter(r => r.KW === prevKW) : compareData);
-  let tmLabel = $derived(tmUseLastKW ? 'KW ' + lastKW : 'KW ' + currentKW);
-  let tmCompLabel = $derived(tmUseLastKW ? 'KW ' + prevKW : compKWLabel);
   function tmDrillPath(field: TreemapField): string[] {
     if (field === 'Kollektion') return ['Kollektion', 'FormPfad', 'Artikel', 'Kasse'];
     if (field === 'FormPfad') return ['FormPfad', 'Kollektion', 'Artikel', 'Kasse'];
@@ -229,7 +220,7 @@
   let tmCurrentField = $derived(tmPathArr[tmCurrentLevel] || tmPathArr[tmPathArr.length - 1]);
   let tmCanDrill = $derived(tmCurrentLevel < tmPathArr.length - 1);
   let treemapNodes = $derived.by((): TmNode[] => {
-    let rows = tmData; let cRows = tmCompData;
+    let rows = data; let cRows = compareData;
     for (const d of tmDrill) {
       const fn = (r: RawRow) => d.field === 'Artikel' ? String(r.BildId) === d.value : (r as any)[d.field] === d.value;
       rows = rows.filter(fn); cRows = cRows.filter(fn);
@@ -279,62 +270,44 @@
     const ss = (rowTotal / remTotal) * side; if (ss <= 0) return Infinity; let worst = 0;
     for (const n of row) { const cs = (n.value / rowTotal) * side; const r = Math.max(ss / cs, cs / ss); if (r > worst) worst = r; } return worst; }
 
-  // Artikel-Matrix — independent time periods
-  let mxPeriod = $state<'tag' | 'woche' | 'monat' | 'jahr'>('woche');
+  // Artikel-Matrix — uses global timeUnit, last 10 periods
   let mxSortBy = $state<'umsatz' | 'anzahl'>('umsatz');
 
   interface MxCol { label: string; rows: MxArt[]; }
   interface MxArt { bildId: string; nr: string; koll: string; formPfad: string; umsatz: number; anzahl: number; }
 
-  // Get unique sorted periods from allData
-  let mxAllDates = $derived([...new Set(allData.map(r => r.Datum))].sort());
-  let mxAllKWs = $derived([...new Set(allData.map(r => r.KW))].sort((a, b) => Number(a) - Number(b)));
-  let mxAllMonths = $derived([...new Set(allData.map(r => r.Monat))].sort((a, b) => {
-    const ord = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
-    return ord.indexOf(a) - ord.indexOf(b);
-  }));
+  function mxPeriodLabel(p: string): string {
+    if (timeUnit === 'tag') return p.slice(5);
+    if (timeUnit === 'woche') return 'KW ' + p;
+    return p;
+  }
 
   let mxColumns = $derived.by((): MxCol[] => {
-    let buckets: { label: string; filter: (r: RawRow) => boolean }[] = [];
-    if (mxPeriod === 'tag') {
-      const dates = mxAllDates.slice(-10);
-      buckets = dates.map(d => ({ label: d.slice(5), filter: (r: RawRow) => r.Datum === d }));
-    } else if (mxPeriod === 'woche') {
-      const kws = mxAllKWs.slice(-10);
-      buckets = kws.map(kw => ({ label: 'KW ' + kw, filter: (r: RawRow) => r.KW === kw }));
-    } else if (mxPeriod === 'monat') {
-      const months = mxAllMonths.slice(-10);
-      buckets = months.map(m => ({ label: m, filter: (r: RawRow) => r.Monat === m }));
-    } else {
-      buckets = [{ label: '2026', filter: () => true }];
-    }
-    // Reverse so newest is first
-    buckets.reverse();
-    return buckets.map(b => {
-      const filtered = allData.filter(b.filter);
+    const last10 = periods.slice(-10).reverse(); // newest first
+    if (timeUnit === 'jahr') {
       const m = new Map<string, { nr: string; koll: string; formPfad: string; umsatz: number; anzahl: number }>();
-      for (const r of filtered) {
-        const bid = String(r.BildId); if (!bid || bid === '0') continue;
+      for (const r of allData) { const bid = String(r.BildId); if (!bid || bid === '0') continue;
         if (!m.has(bid)) m.set(bid, { nr: String(r.Nr || ''), koll: r.Kollektion, formPfad: (r as any).FormPfad || '', umsatz: 0, anzahl: 0 });
-        const a = m.get(bid)!; const an = Number(r.Anzahl) || 0;
-        a.umsatz += (Number(r.EinzelPreis) || 0) * an; a.anzahl += an;
-      }
-      const top = [...m.entries()].map(([bildId, a]) => ({ bildId, ...a })).sort((a, b) => mxSortBy === 'umsatz' ? b.umsatz - a.umsatz : b.anzahl - a.anzahl).slice(0, 15);
-      return { label: b.label, rows: top };
+        const a = m.get(bid)!; const an = Number(r.Anzahl) || 0; a.umsatz += (Number(r.EinzelPreis) || 0) * an; a.anzahl += an; }
+      return [{ label: '2026', rows: [...m.entries()].map(([bildId, a]) => ({ bildId, ...a })).sort((a, b) => mxSortBy === 'umsatz' ? b.umsatz - a.umsatz : b.anzahl - a.anzahl).slice(0, 15) }];
+    }
+    return last10.map(p => {
+      const filtered = allData.filter(r => periodKey(r) === p);
+      const m = new Map<string, { nr: string; koll: string; formPfad: string; umsatz: number; anzahl: number }>();
+      for (const r of filtered) { const bid = String(r.BildId); if (!bid || bid === '0') continue;
+        if (!m.has(bid)) m.set(bid, { nr: String(r.Nr || ''), koll: r.Kollektion, formPfad: (r as any).FormPfad || '', umsatz: 0, anzahl: 0 });
+        const a = m.get(bid)!; const an = Number(r.Anzahl) || 0; a.umsatz += (Number(r.EinzelPreis) || 0) * an; a.anzahl += an; }
+      return { label: mxPeriodLabel(p), rows: [...m.entries()].map(([bildId, a]) => ({ bildId, ...a })).sort((a, b) => mxSortBy === 'umsatz' ? b.umsatz - a.umsatz : b.anzahl - a.anzahl).slice(0, 15) };
     });
   });
 </script>
 
 <div class="space-y-6">
-  <!-- KW Navigation + KPIs -->
+  <!-- KPIs -->
   <div class="rounded-xl p-4" style="background: white; border: 1px solid var(--warm-200);">
-    <div class="flex items-center justify-center gap-4 mb-4">
-      <button onclick={goPrev} disabled={kwIdx <= 0} class="px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-30" style="border: 1px solid var(--warm-200); color: var(--warm-600);">&#9664;</button>
-      <div class="text-center">
-        <p class="text-sm font-semibold" style="color: var(--warm-800);">KW {currentKW}</p>
-        {#if compKWLabel}<p class="text-[9px]" style="color: var(--warm-400);">Vergleich: {compKWLabel}</p>{/if}
-      </div>
-      <button onclick={goNext} disabled={kwIdx >= availableKWs.length - 1} class="px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-30" style="border: 1px solid var(--warm-200); color: var(--warm-600);">&#9654;</button>
+    <div class="text-center mb-3">
+      <p class="text-sm font-bold" style="color: var(--warm-800); font-family: var(--font-heading);">{currentLabel}</p>
+      {#if compareLabel}<p class="text-[9px]" style="color: var(--warm-400);">vs {compareLabel}</p>{/if}
     </div>
     {#if true}
     {@const kpis = [{label:'Umsatz',cur:totalUmsatz,comp:compUmsatz,fmt:fmtEUR},{label:'Stück',cur:totalAnzahl,comp:compAnzahl,fmt:fmtNum},{label:'⌀ Preis',cur:avgPreis,comp:compAvgPreis,fmt:fmtEUR}]}
@@ -392,7 +365,7 @@
   <!-- Shop Umsatzverlauf -->
   <div class="rounded-xl p-4" style="background: white; border: 1px solid var(--warm-200);">
     <div class="flex flex-wrap items-center gap-4 mb-3">
-      <h3 class="text-xs font-semibold uppercase tracking-[0.15em]" style="color: var(--warm-400);">Umsatzverlauf der Shops (KW)</h3>
+      <h3 class="text-xs font-semibold uppercase tracking-[0.15em]" style="color: var(--warm-400);">Umsatzverlauf der Shops</h3>
       <div class="flex rounded-lg overflow-hidden" style="border: 1px solid var(--warm-200);">
         <button onclick={() => shopChartMode = 'line'} class="px-2.5 py-1 text-[10px] font-medium"
           style="background: {shopChartMode === 'line' ? 'var(--accent)' : 'white'}; color: {shopChartMode === 'line' ? 'white' : 'var(--warm-500)'};">Linien</button>
@@ -502,12 +475,7 @@
       </div>
       <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" bind:checked={tmTop20} class="accent-[var(--accent)]" /><span class="text-[11px]" style="color: var(--warm-500);">Nur Top 20</span></label>
       <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" bind:checked={tmHideSonstige} class="accent-[var(--accent)]" /><span class="text-[11px]" style="color: var(--warm-500);">Sonstige ausblenden</span></label>
-      <div class="flex rounded-lg overflow-hidden" style="border: 1px solid var(--warm-200);">
-        <button onclick={() => tmUseLastKW = false} class="px-2.5 py-1 text-[10px] font-medium"
-          style="background: {!tmUseLastKW ? 'var(--accent)' : 'white'}; color: {!tmUseLastKW ? 'white' : 'var(--warm-500)'};">KW {currentKW}</button>
-        <button onclick={() => tmUseLastKW = true} class="px-2.5 py-1 text-[10px] font-medium"
-          style="background: {tmUseLastKW ? 'var(--accent)' : 'white'}; color: {tmUseLastKW ? 'white' : 'var(--warm-500)'}; border-left: 1px solid var(--warm-200);">Letzte KW</button>
-      </div>
+
     </div>
     {#if tmDrill.length > 0}
     <div class="flex items-center gap-1.5 mb-3 flex-wrap">
@@ -613,7 +581,7 @@
   <!-- Top 4 Kolls pro KW -->
   <div class="rounded-xl p-4" style="background: white; border: 1px solid var(--warm-200);">
     <div class="flex flex-wrap items-center gap-4 mb-3">
-      <h3 class="text-xs font-semibold uppercase tracking-[0.15em]" style="color: var(--warm-400);">Top 4 Kollektionen pro KW</h3>
+      <h3 class="text-xs font-semibold uppercase tracking-[0.15em]" style="color: var(--warm-400);">Top 4 Kollektionen pro {timeUnit === 'tag' ? 'Tag' : timeUnit === 'woche' ? 'KW' : timeUnit === 'monat' ? 'Monat' : 'Jahr'}</h3>
       {#if !kwAllTypes}
         <!-- svelte-ignore a11y_click_events_have_key_events --><!-- svelte-ignore a11y_no_static_element_interactions -->
         <span class="text-[10px] cursor-pointer underline" style="color: var(--accent);" onclick={() => kwSelectedTypes = new Set()}>Alle Typen</span>
@@ -650,12 +618,6 @@
   <div class="rounded-xl p-4" style="background: white; border: 1px solid var(--warm-200);">
     <div class="flex flex-wrap items-center gap-4 mb-3">
       <h3 class="text-xs font-semibold uppercase tracking-[0.15em]" style="color: var(--warm-400);">Artikel-Matrix</h3>
-      <div class="flex rounded-lg overflow-hidden" style="border: 1px solid var(--warm-200);">
-        {#each ([['tag','Tag'],['woche','Woche'],['monat','Monat'],['jahr','Jahr']] as const) as [val, label], pi}
-          <button onclick={() => mxPeriod = val} class="px-3 py-1 text-[10px] font-medium"
-            style="background: {mxPeriod === val ? 'var(--accent)' : 'white'}; color: {mxPeriod === val ? 'white' : 'var(--warm-500)'}; {pi > 0 ? 'border-left: 1px solid var(--warm-200)' : ''};">{label}</button>
-        {/each}
-      </div>
       <div class="flex rounded-lg overflow-hidden" style="border: 1px solid var(--warm-200);">
         <button onclick={() => mxSortBy = 'umsatz'} class="px-3 py-1 text-[10px] font-medium"
           style="background: {mxSortBy === 'umsatz' ? 'var(--accent)' : 'white'}; color: {mxSortBy === 'umsatz' ? 'white' : 'var(--warm-500)'};">Umsatz</button>

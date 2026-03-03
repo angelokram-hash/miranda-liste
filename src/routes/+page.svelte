@@ -54,14 +54,53 @@
   let customDim4 = $state<DimOption>('');
   // Time filters
   const MONAT_ORDER = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
-  let filterJahr = $state('alle');
-  let filterMonat = $state('alle');
-  let filterKW = $state('alle');
-  type CompareMode = 'keine' | 'vorperiode' | 'vorjahr';
-  let compareMode = $state<CompareMode>('keine');
-  let availableYears = $state<string[]>([]);
-  let availableMonths = $state<string[]>([]);
+
+  // ── Unified time navigation ──
+  type TimeUnit = 'tag' | 'woche' | 'monat' | 'jahr';
+  type CompareType = 'vorperiode' | 'vorjahr';
+  let timeUnit = $state<TimeUnit>('woche');
+  let timeIdx = $state(0); // 0 = latest period
+  let compareType = $state<CompareType>('vorperiode');
+
+  let availableDates = $state<string[]>([]);
   let availableKWs = $state<string[]>([]);
+  let availableMonths = $state<string[]>([]);
+  let availableYears = $state<string[]>([]);
+
+  let periods = $derived.by((): string[] => {
+    if (timeUnit === 'tag') return availableDates;
+    if (timeUnit === 'woche') return availableKWs;
+    if (timeUnit === 'monat') return availableMonths;
+    return availableYears;
+  });
+  let currentPeriod = $derived(periods.length > 0 ? periods[periods.length - 1 - timeIdx] : '');
+  let comparePeriod = $derived.by((): string => {
+    if (!currentPeriod || periods.length < 2) return '';
+    const ci = periods.indexOf(currentPeriod);
+    if (compareType === 'vorperiode') return ci > 0 ? periods[ci - 1] : '';
+    return ''; // vorjahr not available with single year data
+  });
+  let currentPeriodLabel = $derived.by((): string => {
+    if (!currentPeriod) return '';
+    if (timeUnit === 'tag') return currentPeriod.slice(5);
+    if (timeUnit === 'woche') return 'KW ' + currentPeriod;
+    return currentPeriod;
+  });
+  let comparePeriodLabel = $derived.by((): string => {
+    if (!comparePeriod) return '';
+    if (timeUnit === 'tag') return comparePeriod.slice(5);
+    if (timeUnit === 'woche') return 'KW ' + comparePeriod;
+    return comparePeriod;
+  });
+  function periodFilter(r: RawRow, p: string): boolean {
+    if (timeUnit === 'tag') return r.Datum === p;
+    if (timeUnit === 'woche') return r.KW === p;
+    if (timeUnit === 'monat') return r.Monat === p;
+    return true;
+  }
+  function goPrev() { if (timeIdx < periods.length - 1) timeIdx++; }
+  function goNext() { if (timeIdx > 0) timeIdx--; }
+  function switchTimeUnit(u: TimeUnit) { timeUnit = u; timeIdx = 0; }
 
   // UI state
   let expandedL1 = $state(new Set<string>());
@@ -80,52 +119,16 @@
   let artikelMinCount = 5;
 
   // ─── Derived: filtered data ───
-  let hasFilter = $derived(filterJahr !== 'alle' || filterMonat !== 'alle' || filterKW !== 'alle');
+  let hasFilter = $derived(currentPeriod !== '');
 
   let filteredData = $derived.by(() => {
-    if (!allData.length) return [];
-    return allData.filter(r => {
-      if (filterJahr !== 'alle' && (r as any).Jahr !== filterJahr) return false;
-      if (filterMonat !== 'alle' && r.Monat !== filterMonat) return false;
-      if (filterKW !== 'alle' && r.KW !== filterKW) return false;
-      return true;
-    });
+    if (!allData.length || !currentPeriod) return allData;
+    return allData.filter(r => periodFilter(r, currentPeriod));
   });
 
-  function getCompareFilter(): { jahr?: string; monat?: string; kw?: string } | null {
-    if (compareMode === 'keine' || !hasFilter) return null;
-    if (compareMode === 'vorjahr') {
-      const y = filterJahr !== 'alle' ? String(Number(filterJahr) - 1) : null;
-      if (!y) return null;
-      return { jahr: y, monat: filterMonat !== 'alle' ? filterMonat : undefined, kw: filterKW !== 'alle' ? filterKW : undefined };
-    }
-    // vorperiode
-    if (filterKW !== 'alle') {
-      const prevKW = String(Number(filterKW) - 1).padStart(2, '0');
-      if (Number(prevKW) < 1) return null;
-      return { jahr: filterJahr !== 'alle' ? filterJahr : undefined, monat: undefined, kw: prevKW };
-    }
-    if (filterMonat !== 'alle') {
-      const idx = MONAT_ORDER.indexOf(filterMonat);
-      if (idx <= 0) return null;
-      return { jahr: filterJahr !== 'alle' ? filterJahr : undefined, monat: MONAT_ORDER[idx - 1], kw: undefined };
-    }
-    if (filterJahr !== 'alle') {
-      return { jahr: String(Number(filterJahr) - 1) };
-    }
-    return null;
-  }
-
   let compareData = $derived.by(() => {
-    if (!allData.length || compareMode === 'keine' || !hasFilter) return [];
-    const cf = getCompareFilter();
-    if (!cf) return [];
-    return allData.filter(r => {
-      if (cf.jahr && (r as any).Jahr !== cf.jahr) return false;
-      if (cf.monat && r.Monat !== cf.monat) return false;
-      if (cf.kw && r.KW !== cf.kw) return false;
-      return true;
-    });
+    if (!allData.length || !comparePeriod) return [];
+    return allData.filter(r => periodFilter(r, comparePeriod));
   });
 
   // Comparison lookup: key → { umsatz, anzahl } for L1 groups
@@ -391,12 +394,9 @@
     availableYears = [...new Set(allData.map(r => (r as any).Jahr as string))].sort();
     availableMonths = [...new Set(allData.map(r => r.Monat))].sort((a, b) => MONAT_ORDER.indexOf(a) - MONAT_ORDER.indexOf(b));
     availableKWs = [...new Set(allData.map(r => r.KW))].sort((a, b) => Number(a) - Number(b));
-
-    // Default: latest KW with Vorperiode comparison
-    if (availableKWs.length > 0) {
-      filterKW = availableKWs[availableKWs.length - 1];
-      if (availableKWs.length > 1) compareMode = 'vorperiode';
-    }
+    availableDates = [...new Set(allData.map(r => r.Datum))].sort();
+    // Default: Woche, latest, Vorperiode
+    timeUnit = 'woche'; timeIdx = 0;
 
     loading = false;
   });
@@ -438,44 +438,38 @@
             onblur={(e) => e.currentTarget.style.borderColor = 'var(--warm-200)'} />
         </div>
       </div>
-      <!-- Time Filters -->
-      <div class="flex flex-wrap items-center gap-3 mb-2 py-2 rounded-lg px-3" style="background: var(--warm-100); border: 1px solid var(--warm-200);">
-        <span class="text-[9px] font-semibold uppercase tracking-[0.12em]" style="color: var(--warm-400);">Zeitraum:</span>
-        <div class="flex items-center gap-1">
-          <span class="text-[10px]" style="color: var(--warm-500);">Jahr</span>
-          <select bind:value={filterJahr} class="text-[11px] py-0.5 px-1.5 rounded-md outline-none" style="border: 1px solid var(--warm-200); background: white; color: var(--warm-700);">
-            <option value="alle">alle</option>
-            {#each availableYears as y}<option value={y}>{y}</option>{/each}
-          </select>
-        </div>
-        <div class="flex items-center gap-1">
-          <span class="text-[10px]" style="color: var(--warm-500);">Monat</span>
-          <select bind:value={filterMonat} class="text-[11px] py-0.5 px-1.5 rounded-md outline-none" style="border: 1px solid var(--warm-200); background: white; color: var(--warm-700);">
-            <option value="alle">alle</option>
-            {#each availableMonths as m}<option value={m}>{m}</option>{/each}
-          </select>
-        </div>
-        <div class="flex items-center gap-1">
-          <span class="text-[10px]" style="color: var(--warm-500);">KW</span>
-          <select bind:value={filterKW} class="text-[11px] py-0.5 px-1.5 rounded-md outline-none" style="border: 1px solid var(--warm-200); background: white; color: var(--warm-700);">
-            <option value="alle">alle</option>
-            {#each availableKWs as k}<option value={k}>KW {k}</option>{/each}
-          </select>
-        </div>
-        {#if hasFilter}
-          <div class="flex items-center gap-1 ml-1 pl-2" style="border-left: 1px solid var(--warm-300);">
-            <span class="text-[10px]" style="color: var(--warm-500);">Vergleich:</span>
-            <select bind:value={compareMode} class="text-[11px] py-0.5 px-1.5 rounded-md outline-none" style="border: 1px solid var(--warm-200); background: white; color: var(--warm-700);">
-              <option value="keine">— kein —</option>
-              <option value="vorperiode">Vorperiode</option>
-              <option value="vorjahr">Vorjahr</option>
-            </select>
+      <!-- Time Navigation -->
+      <div class="flex flex-wrap items-center gap-3 mb-2 py-3 rounded-xl px-4" style="background: linear-gradient(135deg, var(--warm-100), #f5efe8); border: 2px solid var(--accent); box-shadow: 0 2px 8px rgba(176,124,62,0.12);">
+        <div class="flex items-center gap-2">
+          <span class="text-[9px] font-bold uppercase tracking-[0.15em]" style="color: var(--accent);">Zeitraum:</span>
+          <div class="flex rounded-lg overflow-hidden" style="border: 1px solid var(--warm-200);">
+            {#each ([['tag','Tag'],['woche','Woche'],['monat','Monat'],['jahr','Jahr']] as const) as [val, label], pi}
+              <button onclick={() => switchTimeUnit(val)} class="px-3 py-1 text-[10px] font-semibold"
+                style="background: {timeUnit === val ? 'var(--accent)' : 'white'}; color: {timeUnit === val ? 'white' : 'var(--warm-500)'}; {pi > 0 ? 'border-left: 1px solid var(--warm-200)' : ''};">{label}</button>
+            {/each}
           </div>
-          {#if compareMode !== 'keine'}
-            <span class="text-[9px] px-2 py-0.5 rounded-full" style="background: var(--warm-200); color: var(--warm-600);">
-              Vgl: {compTotalAnzahl > 0 ? fmtNum(compTotalAnzahl) + ' Stk · ' + fmtEUR(compTotalUmsatz) : 'keine Daten'}
-            </span>
-          {/if}
+        </div>
+        <div class="flex items-center gap-2">
+          <button onclick={goPrev} disabled={timeIdx >= periods.length - 1} class="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold disabled:opacity-25" style="background: var(--accent); color: white;">&#9664;</button>
+          <div class="text-center min-w-20">
+            <p class="text-sm font-bold" style="color: var(--warm-800); font-family: var(--font-heading);">{currentPeriodLabel}</p>
+            {#if comparePeriodLabel}<p class="text-[9px]" style="color: var(--warm-400);">vs {comparePeriodLabel}</p>{/if}
+          </div>
+          <button onclick={goNext} disabled={timeIdx <= 0} class="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold disabled:opacity-25" style="background: var(--accent); color: white;">&#9654;</button>
+        </div>
+        <div class="flex items-center gap-2 ml-1 pl-2" style="border-left: 1.5px solid var(--warm-300);">
+          <span class="text-[9px] font-bold uppercase tracking-[0.12em]" style="color: var(--accent);">Vergleich:</span>
+          <div class="flex rounded-lg overflow-hidden" style="border: 1px solid var(--warm-200);">
+            <button onclick={() => compareType = 'vorperiode'} class="px-2.5 py-1 text-[10px] font-medium"
+              style="background: {compareType === 'vorperiode' ? 'var(--accent)' : 'white'}; color: {compareType === 'vorperiode' ? 'white' : 'var(--warm-500)'};">Vorperiode</button>
+            <button onclick={() => compareType = 'vorjahr'} class="px-2.5 py-1 text-[10px] font-medium"
+              style="background: {compareType === 'vorjahr' ? 'var(--accent)' : 'white'}; color: {compareType === 'vorjahr' ? 'white' : 'var(--warm-500)'}; border-left: 1px solid var(--warm-200);">Jahresvergleich</button>
+          </div>
+        </div>
+        {#if compareData.length > 0}
+          <span class="text-[9px] px-2 py-0.5 rounded-full" style="background: var(--warm-200); color: var(--warm-600);">
+            Vgl: {compTotalAnzahl > 0 ? fmtNum(compTotalAnzahl) + ' Stk' : 'keine Daten'}
+          </span>
         {/if}
       </div>
       <!-- Tabs -->
@@ -612,8 +606,8 @@
     <!-- Table / Charts -->
     {#if activeTab === 'dashboard'}
       <div class="max-w-6xl mx-auto px-5 pb-10">
-        <Dashboard data={filteredData} compareData={compareData} {allData} currentKW={filterKW} {availableKWs}
-          onKWChange={(kw) => { filterKW = kw; }} />
+        <Dashboard data={filteredData} compareData={compareData} {allData} {timeUnit} {periods}
+          currentLabel={currentPeriodLabel} compareLabel={comparePeriodLabel} />
       </div>
     {:else if activeTab === 'bubble'}
       <div class="max-w-6xl mx-auto px-5 pb-10">
