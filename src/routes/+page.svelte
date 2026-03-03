@@ -401,8 +401,8 @@
     loading = false;
   });
 
-  const DATA_TABS: { id: TabId; label: string }[] = [
-    { id: 'dashboard', label: 'Dashboard' },
+  const HOME_TAB: { id: TabId; label: string } = { id: 'dashboard', label: 'Dashboard' };
+  const DRILL_TABS: { id: TabId; label: string }[] = [
     { id: 'kollektion', label: 'Kollektionen' },
     { id: 'artikel', label: 'Artikel' },
     { id: 'form', label: 'Form' },
@@ -413,10 +413,10 @@
     { id: 'custom', label: 'Individuell' },
   ];
   const CHART_TABS: { id: TabId; label: string }[] = [
-    { id: 'bar', label: 'Säulendiagramm' },
-    { id: 'bubble', label: 'Bubble Diagram' },
-    { id: 'pie', label: 'Tortendiagramm' },
-    { id: 'area', label: 'Flächendiagramm' },
+    { id: 'bar', label: 'Säulen' },
+    { id: 'bubble', label: 'Bubble' },
+    { id: 'pie', label: 'Donuts' },
+    { id: 'area', label: 'Flächen' },
   ];
 </script>
 
@@ -479,22 +479,38 @@
         {/if}
       </div>
       <!-- Tabs -->
-      <div class="flex gap-0 -mb-px overflow-x-auto items-center">
-        {#each DATA_TABS as tab}
-          <button onclick={() => switchTab(tab.id)}
-            class="px-4 py-2.5 text-xs font-medium transition-all border-b-2 whitespace-nowrap"
-            style="color: {activeTab === tab.id ? 'var(--accent)' : 'var(--warm-400)'}; border-color: {activeTab === tab.id ? 'var(--accent)' : 'transparent'}; font-family: var(--font-body);">
-            {tab.label}
+      <div class="flex flex-col gap-0 -mb-px overflow-x-auto">
+        <!-- Line 1: Home + Dashboard -->
+        <div class="flex items-center gap-0">
+          <button onclick={() => switchTab(HOME_TAB.id)}
+            class="px-4 py-2 text-xs font-bold transition-all border-b-2 whitespace-nowrap flex items-center gap-1.5"
+            style="color: {activeTab === HOME_TAB.id ? 'var(--accent)' : 'var(--warm-400)'}; border-color: {activeTab === HOME_TAB.id ? 'var(--accent)' : 'transparent'}; font-family: var(--font-body);">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+            {HOME_TAB.label}
           </button>
-        {/each}
-        <span class="px-2 text-sm self-center" style="color: var(--warm-300);">/</span>
-        {#each CHART_TABS as tab}
-          <button onclick={() => switchTab(tab.id)}
-            class="px-4 py-2.5 text-xs font-medium transition-all border-b-2 whitespace-nowrap"
-            style="color: {activeTab === tab.id ? 'var(--accent)' : 'var(--warm-400)'}; border-color: {activeTab === tab.id ? 'var(--accent)' : 'transparent'}; font-family: var(--font-body);">
-            {tab.label}
-          </button>
-        {/each}
+        </div>
+        <!-- Line 2: Drill Down -->
+        <div class="flex items-center gap-0">
+          <span class="px-3 py-1.5 text-[9px] font-bold uppercase tracking-[0.15em] whitespace-nowrap" style="color: var(--warm-400);">Drill Down</span>
+          {#each DRILL_TABS as tab}
+            <button onclick={() => switchTab(tab.id)}
+              class="px-3 py-1.5 text-[11px] font-medium transition-all border-b-2 whitespace-nowrap"
+              style="color: {activeTab === tab.id ? 'var(--accent)' : 'var(--warm-400)'}; border-color: {activeTab === tab.id ? 'var(--accent)' : 'transparent'}; font-family: var(--font-body);">
+              {tab.label}
+            </button>
+          {/each}
+        </div>
+        <!-- Line 3: Diagramme -->
+        <div class="flex items-center gap-0">
+          <span class="px-3 py-1.5 text-[9px] font-bold uppercase tracking-[0.15em] whitespace-nowrap" style="color: var(--warm-400);">Diagramme</span>
+          {#each CHART_TABS as tab}
+            <button onclick={() => switchTab(tab.id)}
+              class="px-3 py-1.5 text-[11px] font-medium transition-all border-b-2 whitespace-nowrap"
+              style="color: {activeTab === tab.id ? 'var(--accent)' : 'var(--warm-400)'}; border-color: {activeTab === tab.id ? 'var(--accent)' : 'transparent'}; font-family: var(--font-body);">
+              {tab.label}
+            </button>
+          {/each}
+        </div>
       </div>
       {#if activeTab === 'preis'}
         <div class="flex items-center gap-2 py-2 border-t" style="border-color: var(--warm-100);">
