@@ -3,6 +3,7 @@
   import BubbleChart from '$lib/BubbleChart.svelte';
   import BarChart from '$lib/BarChart.svelte';
   import PieChart from '$lib/PieChart.svelte';
+  import AreaChart from '$lib/AreaChart.svelte';
 
   // ─── Types ───
   interface RawRow {
@@ -25,7 +26,7 @@
     subGroups?: GroupNode[];           // optional mid-level (Kollektionen inside Form/Art)
   }
 
-  type TabId = 'kollektion' | 'form' | 'art' | 'formpfad' | 'preis' | 'kasse' | 'custom' | 'bubble' | 'bar' | 'pie';
+  type TabId = 'kollektion' | 'artikel' | 'form' | 'art' | 'formpfad' | 'preis' | 'kasse' | 'custom' | 'bubble' | 'bar' | 'pie' | 'area';
 
   // ─── State ───
   let allData: RawRow[] = $state([]);
@@ -72,6 +73,10 @@
   let sortKey = $state<'umsatz' | 'anzahl' | 'avgPreis' | 'name' | 'anteil'>('umsatz');
   let sortDir = $state<'asc' | 'desc'>('desc');
   let lightboxUrl = $state('');
+  // Artikel tab state
+  let artikelSortMode = $state<'umsatz' | 'anzahl'>('umsatz');
+  let artikelHideLow = $state(false);
+  let artikelMinCount = 5;
 
   // ─── Derived: filtered data ───
   let hasFilter = $derived(filterJahr !== 'alle' || filterMonat !== 'alle' || filterKW !== 'alle');
@@ -166,6 +171,40 @@
 
   let compTotalUmsatz = $derived(compareData.reduce((s, r) => s + (Number(r.EinzelPreis) || 0) * (Number(r.Anzahl) || 0), 0));
   let compTotalAnzahl = $derived(compareData.reduce((s, r) => s + (Number(r.Anzahl) || 0), 0));
+
+  // All articles for Artikel tab
+  let allArticles = $derived.by(() => {
+    if (!filteredData.length) return { items: [] as ArticleNode[], sonstige: null as ArticleNode | null };
+    const artMap = new Map<string, { nr: string; umsatz: number; anzahl: number; kassen: Map<string, number> }>();
+    for (const r of filteredData) {
+      const bid = String(r.BildId);
+      if (!bid || bid === '0') continue;
+      if (!artMap.has(bid)) artMap.set(bid, { nr: String(r.Nr || ''), umsatz: 0, anzahl: 0, kassen: new Map() });
+      const a = artMap.get(bid)!;
+      if (!a.nr && r.Nr) a.nr = String(r.Nr);
+      const an = Number(r.Anzahl) || 0;
+      a.umsatz += (Number(r.EinzelPreis) || 0) * an;
+      a.anzahl += an;
+      a.kassen.set(r.Kasse, (a.kassen.get(r.Kasse) || 0) + an);
+    }
+    let items: ArticleNode[] = Array.from(artMap.entries()).map(([bildId, a]) => ({
+      bildId, nr: a.nr, umsatz: a.umsatz, anzahl: a.anzahl,
+      kassenStats: Array.from(a.kassen.entries()).map(([kasse, anzahl]) => ({ kasse, anzahl })).sort((x, y) => y.anzahl - x.anzahl),
+    }));
+    items.sort((a, b) => artikelSortMode === 'umsatz' ? b.umsatz - a.umsatz : b.anzahl - a.anzahl);
+    if (!artikelHideLow) return { items, sonstige: null };
+    const shown: ArticleNode[] = [];
+    let sU = 0, sA = 0;
+    const sK = new Map<string, number>();
+    for (const art of items) {
+      if (art.anzahl >= artikelMinCount) { shown.push(art); }
+      else { sU += art.umsatz; sA += art.anzahl; for (const ks of art.kassenStats) sK.set(ks.kasse, (sK.get(ks.kasse) || 0) + ks.anzahl); }
+    }
+    const sonstige: ArticleNode | null = sA > 0 ? { bildId: '', nr: '', umsatz: sU, anzahl: sA,
+      kassenStats: Array.from(sK.entries()).map(([kasse, anzahl]) => ({ kasse, anzahl })).sort((x, y) => y.anzahl - x.anzahl),
+    } : null;
+    return { items: shown, sonstige };
+  });
 
   // Compare L1 lookup for showing (vergleich) in the table
   let compGroupLookup = $derived.by(() => {
@@ -357,6 +396,7 @@
 
   const DATA_TABS: { id: TabId; label: string }[] = [
     { id: 'kollektion', label: 'Kollektionen' },
+    { id: 'artikel', label: 'Artikel' },
     { id: 'form', label: 'Form' },
     { id: 'art', label: 'Typ' },
     { id: 'formpfad', label: 'FormPfad' },
@@ -368,6 +408,7 @@
     { id: 'bar', label: 'Säulendiagramm' },
     { id: 'bubble', label: 'Bubble Diagram' },
     { id: 'pie', label: 'Tortendiagramm' },
+    { id: 'area', label: 'Flächendiagramm' },
   ];
 </script>
 
@@ -561,6 +602,93 @@
       <div class="max-w-6xl mx-auto px-5 pb-10">
         <div class="rounded-2xl p-5" style="background: white; border: 1px solid var(--warm-200); box-shadow: 0 4px 20px rgba(0,0,0,0.03);">
           <PieChart data={filteredData} />
+        </div>
+      </div>
+        {:else if activeTab === 'area'}
+      <div class="max-w-6xl mx-auto px-5 pb-10">
+        <div class="rounded-2xl p-5" style="background: white; border: 1px solid var(--warm-200); box-shadow: 0 4px 20px rgba(0,0,0,0.03);">
+          <AreaChart data={filteredData} />
+        </div>
+      </div>
+    {:else if activeTab === 'artikel'}
+      <div class="max-w-6xl mx-auto px-5 pb-10">
+        <div class="rounded-2xl p-5" style="background: white; border: 1px solid var(--warm-200); box-shadow: 0 4px 20px rgba(0,0,0,0.03);">
+          <div class="flex flex-wrap items-center gap-4 mb-4">
+            <div class="flex items-center gap-2">
+              <p class="text-[10px] font-semibold uppercase tracking-[0.12em]" style="color: var(--warm-400);">Sortierung:</p>
+              <div class="flex rounded-lg overflow-hidden" style="border: 1px solid var(--warm-200);">
+                <button onclick={() => artikelSortMode = 'umsatz'} class="px-3 py-1 text-[11px] font-medium"
+                  style="background: {artikelSortMode === 'umsatz' ? 'var(--accent)' : 'white'}; color: {artikelSortMode === 'umsatz' ? 'white' : 'var(--warm-500)'};">Umsatz</button>
+                <button onclick={() => artikelSortMode = 'anzahl'} class="px-3 py-1 text-[11px] font-medium"
+                  style="background: {artikelSortMode === 'anzahl' ? 'var(--accent)' : 'white'}; color: {artikelSortMode === 'anzahl' ? 'white' : 'var(--warm-500)'}; border-left: 1px solid var(--warm-200);">Anzahl</button>
+              </div>
+            </div>
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" bind:checked={artikelHideLow} class="accent-[var(--accent)]" />
+              <span class="text-[11px]" style="color: var(--warm-500);">Unter {artikelMinCount} Stk als „Sonstige“</span>
+            </label>
+            <p class="text-[10px] ml-auto" style="color: var(--warm-400);">{allArticles.items.length} Artikel{allArticles.sonstige ? ' + Sonstige' : ''}</p>
+          </div>
+          <div class="flex flex-wrap gap-3">
+            {#each allArticles.items as art (art.bildId)}
+              {@const aKey = `all::${art.bildId}`}
+              {@const aOpen = expandedArticles.has(aKey)}
+              <div class="flex flex-col">
+                <!-- svelte-ignore a11y_click_events_have_key_events -->
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
+                <div class="cursor-pointer" onclick={() => expandedArticles = toggleSet(expandedArticles, aKey)}>
+                  <div class="w-20 h-20 sm:w-24 sm:h-24 rounded-xl overflow-hidden shadow-sm transition-all hover:shadow-lg hover:scale-105" style="border: 1.5px solid {aOpen ? 'var(--accent)' : 'var(--warm-200)'};">
+                    <img src={imgUrl(art.bildId, 200)} alt="" class="w-full h-full object-cover" loading="lazy" onerror={(e) => { (e.currentTarget as HTMLImageElement).parentElement!.style.display='none'; }} />
+                  </div>
+                  <div class="mt-1.5 text-center">
+                    <p class="text-[10px] font-medium tabular-nums" style="color: var(--warm-700);">{fmtEUR(art.umsatz)}</p>
+                    <p class="text-[9px] tabular-nums" style="color: var(--warm-400);">{fmtNum(art.anzahl)} Stk</p>
+                    {#if art.nr}<a href="https://www.konplott.com/go/{art.nr}" target="_blank" rel="noopener" class="text-[8px] underline hover:no-underline" style="color: var(--accent);" onclick={(e) => e.stopPropagation()}>Shop ↗</a>{/if}
+                  </div>
+                </div>
+                {#if aOpen}
+                  <div class="mt-2 w-52 sm:w-60 rounded-xl p-3 shadow-md" style="background: white; border: 1px solid var(--warm-200);">
+                    <div class="flex items-center gap-2 mb-2">
+                      <!-- svelte-ignore a11y_click_events_have_key_events -->
+                      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+                      <img src={imgUrl(art.bildId, 60)} alt="" class="w-7 h-7 rounded object-cover cursor-pointer" onclick={(e) => { e.stopPropagation(); lightboxUrl = imgUrl(art.bildId, 1000); }} />
+                      <div>
+                        <p class="text-[10px] font-semibold" style="color: var(--warm-700);">{fmtEUR(art.umsatz)} · {fmtNum(art.anzahl)} Stk</p>
+                        {#if art.nr}<a href="https://www.konplott.com/go/{art.nr}" target="_blank" rel="noopener" class="text-[9px] underline" style="color: var(--accent);">konplott.com/go/{art.nr}</a>{/if}
+                      </div>
+                    </div>
+                    <p class="text-[9px] font-semibold mb-1.5" style="color: var(--warm-400);">Verkäufe nach Kasse</p>
+                    {#each art.kassenStats as ks}
+                      <div class="flex items-center justify-between py-0.5"><span class="text-[10px] truncate" style="color: var(--warm-600); max-width: 120px;" title={ks.kasse}>{ks.kasse}</span><span class="text-[10px] tabular-nums font-medium" style="color: var(--warm-700);">{fmtNum(ks.anzahl)} Stk</span></div>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+            {/each}
+            {#if allArticles.sonstige}
+              {@const sKey = 'all::sonstige'}
+              {@const sOpen = expandedArticles.has(sKey)}
+              <div class="flex flex-col">
+                <!-- svelte-ignore a11y_click_events_have_key_events -->
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
+                <div class="cursor-pointer" onclick={() => expandedArticles = toggleSet(expandedArticles, sKey)}>
+                  <div class="w-20 h-20 sm:w-24 sm:h-24 rounded-xl overflow-hidden shadow-sm flex items-center justify-center" style="border: 1.5px solid {sOpen ? 'var(--accent)' : 'var(--warm-200)'}; background: var(--warm-100);">
+                    <span class="text-xs font-bold" style="color: var(--warm-400);">Sonstige</span>
+                  </div>
+                  <div class="mt-1.5 text-center"><p class="text-[10px] font-medium tabular-nums" style="color: var(--warm-700);">{fmtEUR(allArticles.sonstige.umsatz)}</p><p class="text-[9px] tabular-nums" style="color: var(--warm-400);">{fmtNum(allArticles.sonstige.anzahl)} Stk</p></div>
+                </div>
+                {#if sOpen}
+                  <div class="mt-2 w-52 sm:w-60 rounded-xl p-3 shadow-md" style="background: white; border: 1px solid var(--warm-200);">
+                    <p class="text-[10px] font-semibold mb-1" style="color: var(--warm-700);">{fmtEUR(allArticles.sonstige.umsatz)} · {fmtNum(allArticles.sonstige.anzahl)} Stk</p>
+                    <p class="text-[9px] font-semibold mb-1.5" style="color: var(--warm-400);">Verkäufe nach Kasse</p>
+                    {#each allArticles.sonstige.kassenStats as ks}
+                      <div class="flex items-center justify-between py-0.5"><span class="text-[10px] truncate" style="color: var(--warm-600); max-width: 120px;" title={ks.kasse}>{ks.kasse}</span><span class="text-[10px] tabular-nums font-medium" style="color: var(--warm-700);">{fmtNum(ks.anzahl)} Stk</span></div>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+            {/if}
+          </div>
         </div>
       </div>
     {:else}
