@@ -53,8 +53,20 @@
   let customDim2 = $state<DimOption>('Form');
   let customDim3 = $state<DimOption>('');
   let customDim4 = $state<DimOption>('');
+  // Time filters
+  const MONAT_ORDER = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
+  let filterJahr = $state('alle');
+  let filterMonat = $state('alle');
+  let filterKW = $state('alle');
+  type CompareMode = 'keine' | 'vorperiode' | 'vorjahr';
+  let compareMode = $state<CompareMode>('keine');
+  let availableYears = $state<string[]>([]);
+  let availableMonths = $state<string[]>([]);
+  let availableKWs = $state<string[]>([]);
   let totalUmsatz = $state(0);
   let totalAnzahl = $state(0);
+  let compTotalUmsatz = $state(0);
+  let compTotalAnzahl = $state(0);
 
   // UI state
   let expandedL1 = $state(new Set<string>());
@@ -68,24 +80,173 @@
   let sortDir = $state<'asc' | 'desc'>('desc');
   let lightboxUrl = $state('');
 
-  // ─── Derived ───
-  // Custom tab: build dynamically from selected dimensions
+  // ─── Derived: filtered data ───
+  let hasFilter = $derived(filterJahr !== 'alle' || filterMonat !== 'alle' || filterKW !== 'alle');
+
+  let filteredData = $derived.by(() => {
+    if (!allData.length) return [];
+    return allData.filter(r => {
+      if (filterJahr !== 'alle' && (r as any).Jahr !== filterJahr) return false;
+      if (filterMonat !== 'alle' && r.Monat !== filterMonat) return false;
+      if (filterKW !== 'alle' && r.KW !== filterKW) return false;
+      return true;
+    });
+  });
+
+  function getCompareFilter(): { jahr?: string; monat?: string; kw?: string } | null {
+    if (compareMode === 'keine' || !hasFilter) return null;
+    if (compareMode === 'vorjahr') {
+      const y = filterJahr !== 'alle' ? String(Number(filterJahr) - 1) : null;
+      if (!y) return null;
+      return { jahr: y, monat: filterMonat !== 'alle' ? filterMonat : undefined, kw: filterKW !== 'alle' ? filterKW : undefined };
+    }
+    // vorperiode
+    if (filterKW !== 'alle') {
+      const prevKW = String(Number(filterKW) - 1).padStart(2, '0');
+      if (Number(prevKW) < 1) return null;
+      return { jahr: filterJahr !== 'alle' ? filterJahr : undefined, monat: undefined, kw: prevKW };
+    }
+    if (filterMonat !== 'alle') {
+      const idx = MONAT_ORDER.indexOf(filterMonat);
+      if (idx <= 0) return null;
+      return { jahr: filterJahr !== 'alle' ? filterJahr : undefined, monat: MONAT_ORDER[idx - 1], kw: undefined };
+    }
+    if (filterJahr !== 'alle') {
+      return { jahr: String(Number(filterJahr) - 1) };
+    }
+    return null;
+  }
+
+  let compareData = $derived.by(() => {
+    if (!allData.length || compareMode === 'keine' || !hasFilter) return [];
+    const cf = getCompareFilter();
+    if (!cf) return [];
+    return allData.filter(r => {
+      if (cf.jahr && (r as any).Jahr !== cf.jahr) return false;
+      if (cf.monat && r.Monat !== cf.monat) return false;
+      if (cf.kw && r.KW !== cf.kw) return false;
+      return true;
+    });
+  });
+
+  // Comparison lookup: key → { umsatz, anzahl } for L1 groups
+  let compLookup = $derived.by(() => {
+    const map = new Map<string, { umsatz: number; anzahl: number }>();
+    if (!compareData.length) return map;
+    // Build for all possible L1 groupings across tabs
+    // We use a general approach: for current tab's L1 field, aggregate compare data
+    return map; // Will be computed per-tab in display
+  });
+
+  // ─── Reactive aggregation ───
+  function buildTabData(rows: RawRow[]) {
+    let total = 0;
+    for (const r of rows) total += (Number(r.EinzelPreis) || 0) * (Number(r.Anzahl) || 0);
+
+    const groupBy = (field: string, subFields?: string[]) => {
+      const map = new Map<string, RawRow[]>();
+      for (const r of rows) { const k = (r as any)[field] || '(leer)'; if (!map.has(k)) map.set(k, []); map.get(k)!.push(r); }
+      return Array.from(map.entries()).map(([n, rr]) => buildGroup(n, rr, total, subFields)).sort((a, b) => b.umsatz - a.umsatz);
+    };
+
+    return { total, groupBy };
+  }
+
+  // Rebuild all tabs reactively when filteredData changes
+  $effect(() => {
+    const rows = filteredData;
+    if (!rows.length && !loading) { 
+      totalUmsatz = 0; totalAnzahl = 0;
+      tabData.kollektion = []; tabData.form = []; tabData.art = []; tabData.formpfad = [];
+      tabData.preis = []; tabData.kasse = []; tabData.bubble = []; tabData.custom = [];
+      kollData.artikel = []; kollData.subkollektion = [];
+      preisData.formpfad = []; preisData.kollektion = [];
+      return;
+    }
+    if (!rows.length) return;
+    const { total, groupBy } = buildTabData(rows);
+    totalUmsatz = total;
+    totalAnzahl = rows.reduce((s, r) => s + (Number(r.Anzahl) || 0), 0);
+
+    kollData.artikel = groupBy('Kollektion');
+    kollData.subkollektion = groupBy('Kollektion', ['SubKollektion']);
+    tabData.kollektion = kollData.artikel;
+    tabData.form = groupBy('Form', ['Kollektion']);
+    tabData.art = groupBy('Art', ['Kollektion']);
+    tabData.formpfad = groupBy('FormPfad', ['Form', 'Kollektion']);
+
+    const preisRanges = ['0 – 20 €', '20 – 50 €', '50 – 120 €', '120 – 250 €', 'über 250 €'];
+    const byPreis = new Map<string, RawRow[]>();
+    for (const r of rows) { const pg = (r as any).Preisgruppe; if (!byPreis.has(pg)) byPreis.set(pg, []); byPreis.get(pg)!.push(r); }
+    preisData.formpfad = preisRanges.filter(p => byPreis.has(p)).map(p => buildGroup(p, byPreis.get(p)!, total, ['Form', 'Kollektion']));
+    preisData.kollektion = preisRanges.filter(p => byPreis.has(p)).map(p => buildGroup(p, byPreis.get(p)!, total, ['Kollektion']));
+    tabData.preis = preisData.formpfad;
+    tabData.kasse = groupBy('Kasse', ['Kollektion']);
+  });
+
+  // Compare totals
+  $effect(() => {
+    if (!compareData.length) { compTotalUmsatz = 0; compTotalAnzahl = 0; return; }
+    compTotalUmsatz = compareData.reduce((s, r) => s + (Number(r.EinzelPreis) || 0) * (Number(r.Anzahl) || 0), 0);
+    compTotalAnzahl = compareData.reduce((s, r) => s + (Number(r.Anzahl) || 0), 0);
+  });
+
+  // Compare L1 lookup for showing (vergleich) in the table
+  let compGroupLookup = $derived.by(() => {
+    const map = new Map<string, Map<string, { umsatz: number; anzahl: number }>>();
+    if (!compareData.length) return map;
+    // Build for common L1 fields
+    for (const field of ['Kollektion', 'Form', 'Art', 'FormPfad', 'Kasse', 'Preisgruppe', 'SubKollektion']) {
+      const fmap = new Map<string, { umsatz: number; anzahl: number }>();
+      for (const r of compareData) {
+        const k = (r as any)[field] || '(leer)';
+        if (!fmap.has(k)) fmap.set(k, { umsatz: 0, anzahl: 0 });
+        const g = fmap.get(k)!;
+        const an = Number(r.Anzahl) || 0;
+        g.umsatz += (Number(r.EinzelPreis) || 0) * an;
+        g.anzahl += an;
+      }
+      map.set(field, fmap);
+    }
+    return map;
+  });
+
+  // Helper: get L1 compare field for current tab
+  function getCompField(): string {
+    if (activeTab === 'kollektion') return 'Kollektion';
+    if (activeTab === 'form') return 'Form';
+    if (activeTab === 'art') return 'Art';
+    if (activeTab === 'formpfad') return 'FormPfad';
+    if (activeTab === 'preis') return 'Preisgruppe';
+    if (activeTab === 'kasse') return 'Kasse';
+    if (activeTab === 'custom') return customDim1 || 'Kollektion';
+    return '';
+  }
+
+  function getComp(name: string): { umsatz: number; anzahl: number } | null {
+    if (!compareData.length) return null;
+    const field = getCompField();
+    return compGroupLookup.get(field)?.get(name) || null;
+  }
+
+  function fmtDelta(cur: number, prev: number): string {
+    if (!prev) return '';
+    const d = ((cur - prev) / prev) * 100;
+    const sign = d >= 0 ? '+' : '';
+    return `(${sign}${d.toFixed(0)}%)`;
+  }
+
+  // Custom tab: build dynamically
   let customGroups = $derived.by(() => {
-    if (activeTab !== 'custom' || !allData.length || !customDim1) return [];
+    if (activeTab !== 'custom' || !filteredData.length || !customDim1) return [];
     const dims = [customDim1, customDim2, customDim3, customDim4].filter(d => d !== '') as string[];
     if (dims.length === 0) return [];
-    const firstField = dims[0];
-    const restFields = dims.slice(1);
     let total = 0;
-    for (const r of allData) total += (Number(r.EinzelPreis) || 0) * (Number(r.Anzahl) || 0);
+    for (const r of filteredData) total += (Number(r.EinzelPreis) || 0) * (Number(r.Anzahl) || 0);
     const byFirst = new Map<string, RawRow[]>();
-    for (const r of allData) {
-      const k = (r as any)[firstField] || '(leer)';
-      if (!byFirst.has(k)) byFirst.set(k, []);
-      byFirst.get(k)!.push(r);
-    }
+    for (const r of filteredData) { const k = (r as any)[dims[0]] || '(leer)'; if (!byFirst.has(k)) byFirst.set(k, []); byFirst.get(k)!.push(r); }
     return Array.from(byFirst.entries())
-      .map(([n, rows]) => buildGroup(n, rows, total, restFields.length > 0 ? restFields : undefined))
+      .map(([n, rows]) => buildGroup(n, rows, total, dims.length > 1 ? dims.slice(1) : undefined))
       .sort((a, b) => b.umsatz - a.umsatz);
   });
 
@@ -200,65 +361,13 @@
     for (const r of allData) {
       (r as any).FormPfad = ((r.Form || '').trim().split(/\s+/)[0]) || '(leer)';
       (r as any).Preisgruppe = getPreisgruppe(Number(r.EinzelPreis) || 0);
+      (r as any).Jahr = '2026'; // single year dataset — extend when multi-year data arrives
     }
 
-    let total = 0;
-    for (const r of allData) total += (Number(r.EinzelPreis) || 0) * (Number(r.Anzahl) || 0);
-    totalUmsatz = total;
-    totalAnzahl = allData.reduce((s, r) => s + (Number(r.Anzahl) || 0), 0);
-
-    // Tab 1: by Kollektion — two modes: direct articles OR SubKollektion → articles
-    const byKoll = new Map<string, RawRow[]>();
-    for (const r of allData) { const k = r.Kollektion; if (!byKoll.has(k)) byKoll.set(k, []); byKoll.get(k)!.push(r); }
-    kollData.artikel = Array.from(byKoll.entries()).map(([n, rows]) => buildGroup(n, rows, total));
-    kollData.subkollektion = Array.from(byKoll.entries()).map(([n, rows]) => buildGroup(n, rows, total, ['SubKollektion']));
-    tabData.kollektion = kollData.artikel;
-
-    // Tab 2: by Form → Kollektion
-    const byForm = new Map<string, RawRow[]>();
-    for (const r of allData) { const k = r.Form || '(leer)'; if (!byForm.has(k)) byForm.set(k, []); byForm.get(k)!.push(r); }
-    tabData.form = Array.from(byForm.entries()).map(([n, rows]) => buildGroup(n, rows, total, ['Kollektion']));
-
-    // Tab 3: by Art → subgroup by Kollektion
-    const byArt = new Map<string, RawRow[]>();
-    for (const r of allData) { const k = r.Art || '(leer)'; if (!byArt.has(k)) byArt.set(k, []); byArt.get(k)!.push(r); }
-    tabData.art = Array.from(byArt.entries()).map(([n, rows]) => buildGroup(n, rows, total, ['Kollektion']));
-
-    // Tab 4: by FormPfad → Form → Kollektion
-    const byFormPfad = new Map<string, RawRow[]>();
-    for (const r of allData) {
-      const pfad = (r as any).FormPfad;
-      if (!byFormPfad.has(pfad)) byFormPfad.set(pfad, []);
-      byFormPfad.get(pfad)!.push(r);
-    }
-    tabData.formpfad = Array.from(byFormPfad.entries()).map(([n, rows]) => buildGroup(n, rows, total, ['Form', 'Kollektion']));
-
-    // Tab 5: by Preisgruppe → FormPfad OR Kollektion
-    const preisRanges = ['0 – 20 €', '20 – 50 €', '50 – 120 €', '120 – 250 €', 'über 250 €'];
-    const byPreisFP = new Map<string, RawRow[]>();
-    const byPreisKoll = new Map<string, RawRow[]>();
-    for (const r of allData) {
-      const pg = (r as any).Preisgruppe;
-      if (!byPreisFP.has(pg)) byPreisFP.set(pg, []);
-      byPreisFP.get(pg)!.push(r);
-      if (!byPreisKoll.has(pg)) byPreisKoll.set(pg, []);
-      byPreisKoll.get(pg)!.push(r);
-    }
-    // Sort by price range order
-    const preisOrder = preisRanges.map(p => p[0]);
-    preisData.formpfad = preisOrder
-      .filter(p => byPreisFP.has(p))
-      .map(p => buildGroup(p, byPreisFP.get(p)!, total, ['Form', 'Kollektion']));
-    preisData.kollektion = preisOrder
-      .filter(p => byPreisKoll.has(p))
-      .map(p => buildGroup(p, byPreisKoll.get(p)!, total, ['Kollektion']));
-    // Also set tabData.preis to default (will use preisData via currentGroups)
-    tabData.preis = preisData.formpfad;
-
-    // Tab 6: by Kasse → Kollektion
-    const byKasse = new Map<string, RawRow[]>();
-    for (const r of allData) { const k = r.Kasse || '(leer)'; if (!byKasse.has(k)) byKasse.set(k, []); byKasse.get(k)!.push(r); }
-    tabData.kasse = Array.from(byKasse.entries()).map(([n, rows]) => buildGroup(n, rows, total, ['Kollektion']));
+    // Populate filter options
+    availableYears = [...new Set(allData.map(r => (r as any).Jahr as string))].sort();
+    availableMonths = [...new Set(allData.map(r => r.Monat))].sort((a, b) => MONAT_ORDER.indexOf(a) - MONAT_ORDER.indexOf(b));
+    availableKWs = [...new Set(allData.map(r => r.KW))].sort((a, b) => Number(a) - Number(b));
 
     loading = false;
   });
@@ -292,6 +401,46 @@
             onfocus={(e) => e.currentTarget.style.borderColor = 'var(--accent)'}
             onblur={(e) => e.currentTarget.style.borderColor = 'var(--warm-200)'} />
         </div>
+      </div>
+      <!-- Time Filters -->
+      <div class="flex flex-wrap items-center gap-3 mb-2 py-2 rounded-lg px-3" style="background: var(--warm-100); border: 1px solid var(--warm-200);">
+        <span class="text-[9px] font-semibold uppercase tracking-[0.12em]" style="color: var(--warm-400);">Zeitraum:</span>
+        <div class="flex items-center gap-1">
+          <span class="text-[10px]" style="color: var(--warm-500);">Jahr</span>
+          <select bind:value={filterJahr} class="text-[11px] py-0.5 px-1.5 rounded-md outline-none" style="border: 1px solid var(--warm-200); background: white; color: var(--warm-700);">
+            <option value="alle">alle</option>
+            {#each availableYears as y}<option value={y}>{y}</option>{/each}
+          </select>
+        </div>
+        <div class="flex items-center gap-1">
+          <span class="text-[10px]" style="color: var(--warm-500);">Monat</span>
+          <select bind:value={filterMonat} class="text-[11px] py-0.5 px-1.5 rounded-md outline-none" style="border: 1px solid var(--warm-200); background: white; color: var(--warm-700);">
+            <option value="alle">alle</option>
+            {#each availableMonths as m}<option value={m}>{m}</option>{/each}
+          </select>
+        </div>
+        <div class="flex items-center gap-1">
+          <span class="text-[10px]" style="color: var(--warm-500);">KW</span>
+          <select bind:value={filterKW} class="text-[11px] py-0.5 px-1.5 rounded-md outline-none" style="border: 1px solid var(--warm-200); background: white; color: var(--warm-700);">
+            <option value="alle">alle</option>
+            {#each availableKWs as k}<option value={k}>KW {k}</option>{/each}
+          </select>
+        </div>
+        {#if hasFilter}
+          <div class="flex items-center gap-1 ml-1 pl-2" style="border-left: 1px solid var(--warm-300);">
+            <span class="text-[10px]" style="color: var(--warm-500);">Vergleich:</span>
+            <select bind:value={compareMode} class="text-[11px] py-0.5 px-1.5 rounded-md outline-none" style="border: 1px solid var(--warm-200); background: white; color: var(--warm-700);">
+              <option value="keine">— kein —</option>
+              <option value="vorperiode">Vorperiode</option>
+              <option value="vorjahr">Vorjahr</option>
+            </select>
+          </div>
+          {#if compareMode !== 'keine'}
+            <span class="text-[9px] px-2 py-0.5 rounded-full" style="background: var(--warm-200); color: var(--warm-600);">
+              Vgl: {compTotalAnzahl > 0 ? fmtNum(compTotalAnzahl) + ' Stk · ' + fmtEUR(compTotalUmsatz) : 'keine Daten'}
+            </span>
+          {/if}
+        {/if}
       </div>
       <!-- Tabs -->
       <div class="flex gap-0 -mb-px overflow-x-auto">
@@ -385,8 +534,16 @@
     <!-- KPIs -->
     <div class="max-w-6xl mx-auto px-5 pt-5 pb-4">
       <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div class="rounded-xl p-4" style="background: white; border: 1px solid var(--warm-200);"><p class="text-[9px] font-semibold uppercase tracking-[0.15em]" style="color: var(--warm-400);">Umsatz</p><p class="text-lg font-bold mt-0.5 tabular-nums" style="color: var(--warm-800);">{fmtEUR(totalUmsatz)}</p></div>
-        <div class="rounded-xl p-4" style="background: white; border: 1px solid var(--warm-200);"><p class="text-[9px] font-semibold uppercase tracking-[0.15em]" style="color: var(--warm-400);">Stück</p><p class="text-lg font-bold mt-0.5 tabular-nums" style="color: var(--warm-800);">{fmtNum(totalAnzahl)}</p></div>
+        <div class="rounded-xl p-4" style="background: white; border: 1px solid var(--warm-200);">
+          <p class="text-[9px] font-semibold uppercase tracking-[0.15em]" style="color: var(--warm-400);">Umsatz</p>
+          <p class="text-lg font-bold mt-0.5 tabular-nums" style="color: var(--warm-800);">{fmtEUR(totalUmsatz)}</p>
+          {#if compTotalUmsatz > 0}<p class="text-[10px] tabular-nums" style="color: {totalUmsatz >= compTotalUmsatz ? 'var(--accent)' : '#c06050'};">Vgl: {fmtEUR(compTotalUmsatz)} {fmtDelta(totalUmsatz, compTotalUmsatz)}</p>{/if}
+        </div>
+        <div class="rounded-xl p-4" style="background: white; border: 1px solid var(--warm-200);">
+          <p class="text-[9px] font-semibold uppercase tracking-[0.15em]" style="color: var(--warm-400);">Stück</p>
+          <p class="text-lg font-bold mt-0.5 tabular-nums" style="color: var(--warm-800);">{fmtNum(totalAnzahl)}</p>
+          {#if compTotalAnzahl > 0}<p class="text-[10px] tabular-nums" style="color: {totalAnzahl >= compTotalAnzahl ? 'var(--accent)' : '#c06050'};">Vgl: {fmtNum(compTotalAnzahl)} {fmtDelta(totalAnzahl, compTotalAnzahl)}</p>{/if}
+        </div>
         <div class="rounded-xl p-4" style="background: white; border: 1px solid var(--warm-200);"><p class="text-[9px] font-semibold uppercase tracking-[0.15em]" style="color: var(--warm-400);">Einträge</p><p class="text-lg font-bold mt-0.5" style="color: var(--warm-800);">{fmtNum(currentGroups.length)}</p></div>
         <div class="rounded-xl p-4" style="background: white; border: 1px solid var(--warm-200);"><p class="text-[9px] font-semibold uppercase tracking-[0.15em]" style="color: var(--warm-400);">⌀ Preis</p><p class="text-lg font-bold mt-0.5 tabular-nums" style="color: var(--warm-800);">{fmtEUR(totalAnzahl > 0 ? totalUmsatz / totalAnzahl : 0)}</p></div>
       </div>
@@ -396,7 +553,7 @@
     {#if activeTab === 'bubble'}
       <div class="max-w-6xl mx-auto px-5 pb-10">
         <div class="rounded-2xl p-5" style="background: white; border: 1px solid var(--warm-200); box-shadow: 0 4px 20px rgba(0,0,0,0.03);">
-          <BubbleChart data={allData} />
+          <BubbleChart data={filteredData} />
         </div>
       </div>
     {:else}
@@ -417,6 +574,7 @@
           {#each filtered as g1 (g1.name)}
             {@const l1Open = expandedL1.has(g1.name)}
             {@const hasSubGroups = !!g1.subGroups && g1.subGroups.length > 0}
+            {@const comp = getComp(g1.name)}
             <div>
               <!-- svelte-ignore a11y_click_events_have_key_events -->
               <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -435,8 +593,8 @@
                   <p class="text-sm font-medium truncate" style="color: var(--warm-800);">{g1.name}</p>
                   <p class="text-[10px]" style="color: var(--warm-400);">{hasSubGroups ? `${g1.subGroups?.length} Kollektionen · ` : ''}{g1.articles.length} Artikel</p>
                 </div>
-                <p class="text-sm text-right tabular-nums font-medium" style="color: var(--warm-700);">{fmtEUR(g1.umsatz)}</p>
-                <p class="text-sm text-right tabular-nums" style="color: var(--warm-600);">{fmtNum(g1.anzahl)}</p>
+                <p class="text-sm text-right tabular-nums font-medium" style="color: var(--warm-700);">{fmtEUR(g1.umsatz)}{#if comp}<span class="text-[9px] ml-1" style="color: {g1.umsatz >= (comp.umsatz||1) ? 'var(--accent)' : '#c06050'};">{fmtDelta(g1.umsatz, comp.umsatz)}</span>{/if}</p>
+                <p class="text-sm text-right tabular-nums" style="color: var(--warm-600);">{fmtNum(g1.anzahl)}{#if comp}<span class="text-[9px] ml-1" style="color: {g1.anzahl >= (comp.anzahl||1) ? 'var(--accent)' : '#c06050'};">{fmtDelta(g1.anzahl, comp.anzahl)}</span>{/if}</p>
                 <p class="text-sm text-right tabular-nums" style="color: var(--warm-600);">{fmtEUR(g1.avgPreis)}</p>
                 <div class="text-right">
                   <p class="text-sm tabular-nums font-medium" style="color: var(--accent);">{fmtPct(g1.anteil)}</p>
