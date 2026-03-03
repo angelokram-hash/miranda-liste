@@ -9,8 +9,8 @@
   // ─── Types ───
   interface RawRow {
     Kollektion: string; BildId: string; Anzahl: number; EinzelPreis: number;
-    Umsatz: number; Art: string; Form: string; Nr: string; SubKollektion: string;
-    Kasse: string; Monat: string; KW: string; Wochentag: string;
+    Umsatz: number; Art: string; Form: string; FormPfad: string; Nr: string; SubKollektion: string;
+    Kasse: string; Monat: string; KW: string; Wochentag: string; Datum: string;
   }
 
   interface KasseStat { kasse: string; anzahl: number; }
@@ -382,7 +382,7 @@
 
     // Add computed fields to each row for uniform buildGroup access
     for (const r of allData) {
-      (r as any).FormPfad = ((r.Form || '').trim().split(/\s+/)[0]) || '(leer)';
+      (r as any).FormPfad = (r as any).FormPfad || ((r.Form || '').trim().split(/\s+/)[0]) || '(leer)';
       (r as any).Preisgruppe = getPreisgruppe(Number(r.EinzelPreis) || 0);
       (r as any).Jahr = '2026'; // single year dataset — extend when multi-year data arrives
     }

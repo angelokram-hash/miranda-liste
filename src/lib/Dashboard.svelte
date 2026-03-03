@@ -1,7 +1,7 @@
 <script lang="ts">
   interface RawRow {
     Kollektion: string; BildId: string; Anzahl: number; EinzelPreis: number;
-    Form: string; Kasse: string; Art: string; Nr: string; KW: string; Monat: string;
+    Form: string; FormPfad: string; Kasse: string; Art: string; Nr: string; KW: string; Monat: string; Datum: string;
   }
 
   let { data = [], compareData = [], allData = [], currentKW = 'alle', availableKWs = [] as string[], onKWChange = (kw: string) => {} }: {
@@ -271,28 +271,48 @@
     const ss = (rowTotal / remTotal) * side; if (ss <= 0) return Infinity; let worst = 0;
     for (const n of row) { const cs = (n.value / rowTotal) * side; const r = Math.max(ss / cs, cs / ss); if (r > worst) worst = r; } return worst; }
 
-  // Artikel-Matrix
-  let matrixSort = $state<'umsatz' | 'anzahl'>('umsatz');
-  interface MatrixArt { bildId: string; nr: string; koll: string; curUmsatz: number; curAnzahl: number; compUmsatz: number; compAnzahl: number; curRank: number; compRank: number; }
-  let matrixArticles = $derived.by((): MatrixArt[] => {
-    const m = new Map<string, { nr: string; koll: string; umsatz: number; anzahl: number }>();
-    for (const r of data) { const bid = String(r.BildId); if (!bid || bid === '0') continue;
-      if (!m.has(bid)) m.set(bid, { nr: String(r.Nr || ''), koll: r.Kollektion, umsatz: 0, anzahl: 0 });
-      const a = m.get(bid)!; const an = Number(r.Anzahl) || 0; a.umsatz += (Number(r.EinzelPreis) || 0) * an; a.anzahl += an; }
-    const cm = new Map<string, { umsatz: number; anzahl: number }>();
-    for (const r of compareData) { const bid = String(r.BildId); if (!bid || bid === '0') continue;
-      if (!cm.has(bid)) cm.set(bid, { umsatz: 0, anzahl: 0 }); const a = cm.get(bid)!; const an = Number(r.Anzahl) || 0;
-      a.umsatz += (Number(r.EinzelPreis) || 0) * an; a.anzahl += an; }
-    const curList = [...m.entries()].map(([bildId, a]) => ({ bildId, nr: a.nr, koll: a.koll, curUmsatz: a.umsatz, curAnzahl: a.anzahl,
-      compUmsatz: cm.get(bildId)?.umsatz || 0, compAnzahl: cm.get(bildId)?.anzahl || 0, curRank: 0, compRank: 0 }));
-    const sortKey = matrixSort === 'umsatz' ? 'curUmsatz' : 'curAnzahl';
-    curList.sort((a, b) => (b as any)[sortKey] - (a as any)[sortKey]);
-    curList.forEach((a, i) => a.curRank = i + 1);
-    const compSortKey = matrixSort === 'umsatz' ? 'compUmsatz' : 'compAnzahl';
-    const withCompData = curList.filter(a => (a as any)[compSortKey] > 0);
-    const compSorted = [...withCompData].sort((a, b) => (b as any)[compSortKey] - (a as any)[compSortKey]);
-    compSorted.forEach((a, i) => a.compRank = i + 1);
-    return curList.slice(0, 30);
+  // Artikel-Matrix — independent time periods
+  let mxPeriod = $state<'tag' | 'woche' | 'monat' | 'jahr'>('woche');
+
+  interface MxCol { label: string; rows: MxArt[]; }
+  interface MxArt { bildId: string; nr: string; koll: string; formPfad: string; umsatz: number; anzahl: number; }
+
+  // Get unique sorted periods from allData
+  let mxAllDates = $derived([...new Set(allData.map(r => r.Datum))].sort());
+  let mxAllKWs = $derived([...new Set(allData.map(r => r.KW))].sort((a, b) => Number(a) - Number(b)));
+  let mxAllMonths = $derived([...new Set(allData.map(r => r.Monat))].sort((a, b) => {
+    const ord = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
+    return ord.indexOf(a) - ord.indexOf(b);
+  }));
+
+  let mxColumns = $derived.by((): MxCol[] => {
+    let buckets: { label: string; filter: (r: RawRow) => boolean }[] = [];
+    if (mxPeriod === 'tag') {
+      const dates = mxAllDates.slice(-10);
+      buckets = dates.map(d => ({ label: d.slice(5), filter: (r: RawRow) => r.Datum === d }));
+    } else if (mxPeriod === 'woche') {
+      const kws = mxAllKWs.slice(-10);
+      buckets = kws.map(kw => ({ label: 'KW ' + kw, filter: (r: RawRow) => r.KW === kw }));
+    } else if (mxPeriod === 'monat') {
+      const months = mxAllMonths.slice(-10);
+      buckets = months.map(m => ({ label: m, filter: (r: RawRow) => r.Monat === m }));
+    } else {
+      buckets = [{ label: '2026', filter: () => true }];
+    }
+    // Reverse so newest is first
+    buckets.reverse();
+    return buckets.map(b => {
+      const filtered = allData.filter(b.filter);
+      const m = new Map<string, { nr: string; koll: string; formPfad: string; umsatz: number; anzahl: number }>();
+      for (const r of filtered) {
+        const bid = String(r.BildId); if (!bid || bid === '0') continue;
+        if (!m.has(bid)) m.set(bid, { nr: String(r.Nr || ''), koll: r.Kollektion, formPfad: (r as any).FormPfad || '', umsatz: 0, anzahl: 0 });
+        const a = m.get(bid)!; const an = Number(r.Anzahl) || 0;
+        a.umsatz += (Number(r.EinzelPreis) || 0) * an; a.anzahl += an;
+      }
+      const top = [...m.entries()].map(([bildId, a]) => ({ bildId, ...a })).sort((a, b) => b.umsatz - a.umsatz).slice(0, 15);
+      return { label: b.label, rows: top };
+    });
   });
 </script>
 
@@ -604,48 +624,47 @@
 
   <!-- Artikel-Matrix -->
   <div class="rounded-xl p-4" style="background: white; border: 1px solid var(--warm-200);">
-    <div class="flex items-center gap-4 mb-3">
+    <div class="flex flex-wrap items-center gap-4 mb-3">
       <h3 class="text-xs font-semibold uppercase tracking-[0.15em]" style="color: var(--warm-400);">Artikel-Matrix</h3>
       <div class="flex rounded-lg overflow-hidden" style="border: 1px solid var(--warm-200);">
-        <button onclick={() => matrixSort = 'umsatz'} class="px-3 py-1 text-[11px] font-medium" style="background: {matrixSort === 'umsatz' ? 'var(--accent)' : 'white'}; color: {matrixSort === 'umsatz' ? 'white' : 'var(--warm-500)'};">nach Umsatz</button>
-        <button onclick={() => matrixSort = 'anzahl'} class="px-3 py-1 text-[11px] font-medium" style="background: {matrixSort === 'anzahl' ? 'var(--accent)' : 'white'}; color: {matrixSort === 'anzahl' ? 'white' : 'var(--warm-500)'}; border-left: 1px solid var(--warm-200);">nach Anzahl</button>
+        {#each ([['tag','Tag'],['woche','Woche'],['monat','Monat'],['jahr','Jahr']] as const) as [val, label], pi}
+          <button onclick={() => mxPeriod = val} class="px-3 py-1 text-[10px] font-medium"
+            style="background: {mxPeriod === val ? 'var(--accent)' : 'white'}; color: {mxPeriod === val ? 'white' : 'var(--warm-500)'}; {pi > 0 ? 'border-left: 1px solid var(--warm-200)' : ''};">{label}</button>
+        {/each}
       </div>
     </div>
     <div class="overflow-x-auto">
-      <table class="w-full text-[10px]" style="border-collapse: collapse;">
-        <thead>
-          <tr style="border-bottom: 2px solid var(--warm-200); background: var(--warm-50);">
-            <th class="px-2 py-1.5 text-left font-semibold" style="color: var(--warm-500); width: 32px;">#</th>
-            <th class="px-2 py-1.5 text-left font-semibold" style="color: var(--warm-500); width: 36px;">Bild</th>
-            <th class="px-2 py-1.5 text-left font-semibold" style="color: var(--warm-500);">Kollektion</th>
-            <th class="px-2 py-1.5 text-right font-semibold" style="color: var(--warm-500);">KW {currentKW}</th>
-            <th class="px-2 py-1.5 text-right font-semibold" style="color: var(--warm-500);">{compKWLabel || 'Vgl'}</th>
-            <th class="px-2 py-1.5 text-right font-semibold" style="color: var(--warm-500);">&#916;</th>
-            <th class="px-2 py-1.5 text-center font-semibold" style="color: var(--warm-500);">Rang</th>
-            <th class="px-2 py-1.5 text-right font-semibold" style="color: var(--warm-500);">Link</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each matrixArticles as art}
-            {@const curVal = matrixSort === 'umsatz' ? art.curUmsatz : art.curAnzahl}
-            {@const compVal = matrixSort === 'umsatz' ? art.compUmsatz : art.compAnzahl}
-            <tr style="border-bottom: 1px solid var(--warm-100);">
-              <td class="px-2 py-1 tabular-nums font-semibold" style="color: var(--warm-500);">{art.curRank}</td>
-              <td class="px-2 py-1"><img src={imgUrl(art.bildId, 40)} alt="" class="w-7 h-7 rounded object-cover" loading="lazy" /></td>
-              <td class="px-2 py-1 truncate" style="color: var(--warm-700); max-width: 140px;" title={art.koll}>{art.koll}</td>
-              <td class="px-2 py-1 text-right tabular-nums font-medium" style="color: var(--warm-800);">{matrixSort === 'umsatz' ? fmtEUR(curVal) : fmtNum(curVal)}</td>
-              <td class="px-2 py-1 text-right tabular-nums" style="color: var(--warm-400);">{compVal > 0 ? (matrixSort === 'umsatz' ? fmtEUR(compVal) : fmtNum(compVal)) : '–'}</td>
-              <td class="px-2 py-1 text-right tabular-nums font-semibold" style="color: {compVal > 0 ? deltaColor(curVal, compVal) : 'var(--warm-300)'};">{compVal > 0 ? fmtDelta(curVal, compVal) : ''}</td>
-              <td class="px-2 py-1 text-center">
-                {#if art.compRank > 0 && art.compRank !== art.curRank}
-                  <span class="text-[9px] font-semibold" style="color: {art.compRank > art.curRank ? '#6b8e5a' : '#c06050'};">{art.compRank > art.curRank ? '▲' : '▼'}{Math.abs(art.compRank - art.curRank)}</span>
-                {:else}<span style="color: var(--warm-300);">=</span>{/if}
-              </td>
-              <td class="px-2 py-1 text-right">{#if art.nr}<a href="https://www.konplott.com/go/{art.nr}" target="_blank" rel="noopener" class="underline" style="color: var(--accent);">&#8599;</a>{/if}</td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
+      <div class="flex gap-3" style="min-width: max-content;">
+        {#each mxColumns as col, ci}
+          <div class="flex-shrink-0" style="width: 150px;">
+            <div class="text-center mb-2 py-1.5 rounded-lg" style="background: {ci === 0 ? 'var(--accent)' : 'var(--warm-100)'};">
+              <p class="text-[10px] font-bold" style="color: {ci === 0 ? 'white' : 'var(--warm-600)'};">{col.label}</p>
+            </div>
+            <div class="space-y-2">
+              {#each col.rows as art, ri}
+                <div class="rounded-lg p-1.5" style="border: 1px solid var(--warm-100); background: {ri < 3 ? 'var(--warm-50)' : 'white'};">
+                  <div class="flex items-start gap-1.5">
+                    <div class="relative flex-shrink-0">
+                      <img src={imgUrl(art.bildId, 80)} alt="" class="w-10 h-10 rounded object-cover" loading="lazy" />
+                      <div class="absolute -top-1 -left-1 w-4 h-4 rounded-full flex items-center justify-center text-[7px] font-bold" style="background: {ri < 3 ? 'var(--accent)' : 'var(--warm-300)'}; color: white;">{ri + 1}</div>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                      <p class="text-[9px] font-semibold tabular-nums" style="color: var(--warm-800);">{fmtEUR(art.umsatz)}</p>
+                      <p class="text-[8px] tabular-nums" style="color: var(--warm-400);">{fmtNum(art.anzahl)} Stk</p>
+                      <p class="text-[8px] truncate" style="color: var(--warm-600);" title={art.koll}>{art.koll}</p>
+                      {#if art.formPfad}<p class="text-[7px]" style="color: var(--warm-400);">{art.formPfad}</p>{/if}
+                    </div>
+                  </div>
+                  {#if art.nr}<a href="https://www.konplott.com/go/{art.nr}" target="_blank" rel="noopener" class="text-[7px] underline" style="color: var(--accent);">Shop &#8599;</a>{/if}
+                </div>
+              {/each}
+              {#if col.rows.length === 0}
+                <p class="text-[9px] text-center py-4" style="color: var(--warm-300);">Keine Daten</p>
+              {/if}
+            </div>
+          </div>
+        {/each}
+      </div>
     </div>
   </div>
 </div>
