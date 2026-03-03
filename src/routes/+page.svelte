@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import BubbleChart from '$lib/BubbleChart.svelte';
 
   // ─── Types ───
   interface RawRow {
@@ -22,7 +23,7 @@
     subGroups?: GroupNode[];           // optional mid-level (Kollektionen inside Form/Art)
   }
 
-  type TabId = 'kollektion' | 'form' | 'art' | 'formpfad' | 'preis' | 'kasse';
+  type TabId = 'kollektion' | 'form' | 'art' | 'formpfad' | 'preis' | 'kasse' | 'bubble';
 
   // ─── State ───
   let allData: RawRow[] = $state([]);
@@ -30,7 +31,7 @@
   let activeTab = $state<TabId>('kollektion');
 
   // Pre-aggregated data per tab
-  let tabData = $state<Record<TabId, GroupNode[]>>({ kollektion: [], form: [], art: [], formpfad: [], preis: [], kasse: [] });
+  let tabData = $state<Record<TabId, GroupNode[]>>({ kollektion: [], form: [], art: [], formpfad: [], preis: [], kasse: [], bubble: [] });
   // For Preis tab: two sub-modes
   let preisSubTab = $state<'formpfad' | 'kollektion'>('formpfad');
   let preisData = $state<Record<'formpfad' | 'kollektion', GroupNode[]>>({ formpfad: [], kollektion: [] });
@@ -228,6 +229,7 @@
     { id: 'formpfad', label: 'FormPfad' },
     { id: 'preis', label: 'Preisgruppe' },
     { id: 'kasse', label: 'Kasse' },
+    { id: 'bubble', label: 'Bubble Diagram' },
   ];
 </script>
 
@@ -311,7 +313,14 @@
       </div>
     </div>
 
-    <!-- Table -->
+    <!-- Table / Bubble -->
+    {#if activeTab === 'bubble'}
+      <div class="max-w-6xl mx-auto px-5 pb-10">
+        <div class="rounded-2xl p-5" style="background: white; border: 1px solid var(--warm-200); box-shadow: 0 4px 20px rgba(0,0,0,0.03);">
+          <BubbleChart data={allData} />
+        </div>
+      </div>
+    {:else}
     <div class="max-w-6xl mx-auto px-5 pb-10">
       <div class="rounded-2xl overflow-hidden" style="background: white; border: 1px solid var(--warm-200); box-shadow: 0 4px 20px rgba(0,0,0,0.03);">
         <!-- Headers -->
@@ -558,6 +567,7 @@
         </div>
       </div>
     </div>
+    {/if}
   {/if}
 </div>
 
