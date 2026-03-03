@@ -392,6 +392,12 @@
     availableMonths = [...new Set(allData.map(r => r.Monat))].sort((a, b) => MONAT_ORDER.indexOf(a) - MONAT_ORDER.indexOf(b));
     availableKWs = [...new Set(allData.map(r => r.KW))].sort((a, b) => Number(a) - Number(b));
 
+    // Default: latest KW with Vorperiode comparison
+    if (availableKWs.length > 0) {
+      filterKW = availableKWs[availableKWs.length - 1];
+      if (availableKWs.length > 1) compareMode = 'vorperiode';
+    }
+
     loading = false;
   });
 
@@ -590,7 +596,8 @@
     <!-- Table / Charts -->
     {#if activeTab === 'dashboard'}
       <div class="max-w-6xl mx-auto px-5 pb-10">
-        <Dashboard data={filteredData} />
+        <Dashboard data={filteredData} compareData={compareData} currentKW={filterKW} {availableKWs}
+          onKWChange={(kw) => { filterKW = kw; }} />
       </div>
     {:else if activeTab === 'bubble'}
       <div class="max-w-6xl mx-auto px-5 pb-10">
