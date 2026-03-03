@@ -178,6 +178,22 @@
     return shopTrend.data.map((row, ki) => '' + (60 + ki * 70 + 35) + ',' + (20 + (1 - row[si] / maxV) * 230)).join(' ');
   }
 
+  // Shop chart controls
+  let shopChartMode = $state<'line' | 'bar' | 'bar100'>('line');
+  let selectedShops = $state<Set<string>>(new Set());
+  let shopAllSelected = $derived(selectedShops.size === 0);
+  function toggleShop(shop: string) {
+    const next = new Set(selectedShops);
+    if (next.has(shop)) next.delete(shop); else next.add(shop);
+    selectedShops = next;
+  }
+  function isShopVisible(shop: string): boolean {
+    return shopAllSelected || selectedShops.has(shop);
+  }
+  let visibleShopIndices = $derived(
+    shopTrend.topShops.map((s, i) => ({ s, i })).filter(x => isShopVisible(x.s)).map(x => x.i)
+  );
+
   // Treemaps
   type TreemapField = 'Kollektion' | 'FormPfad' | 'Artikel';
   let tmField = $state<TreemapField>('Kollektion');
@@ -487,31 +503,103 @@
 
   <!-- Shop Umsatzverlauf -->
   <div class="rounded-xl p-4" style="background: white; border: 1px solid var(--warm-200);">
-    <h3 class="text-xs font-semibold uppercase tracking-[0.15em] mb-3" style="color: var(--warm-400);">Umsatzverlauf der Shops (KW)</h3>
+    <div class="flex flex-wrap items-center gap-4 mb-3">
+      <h3 class="text-xs font-semibold uppercase tracking-[0.15em]" style="color: var(--warm-400);">Umsatzverlauf der Shops (KW)</h3>
+      <div class="flex rounded-lg overflow-hidden" style="border: 1px solid var(--warm-200);">
+        <button onclick={() => shopChartMode = 'line'} class="px-2.5 py-1 text-[10px] font-medium"
+          style="background: {shopChartMode === 'line' ? 'var(--accent)' : 'white'}; color: {shopChartMode === 'line' ? 'white' : 'var(--warm-500)'};">Linien</button>
+        <button onclick={() => shopChartMode = 'bar'} class="px-2.5 py-1 text-[10px] font-medium"
+          style="background: {shopChartMode === 'bar' ? 'var(--accent)' : 'white'}; color: {shopChartMode === 'bar' ? 'white' : 'var(--warm-500)'}; border-left: 1px solid var(--warm-200);">Säulen</button>
+        <button onclick={() => shopChartMode = 'bar100'} class="px-2.5 py-1 text-[10px] font-medium"
+          style="background: {shopChartMode === 'bar100' ? 'var(--accent)' : 'white'}; color: {shopChartMode === 'bar100' ? 'white' : 'var(--warm-500)'}; border-left: 1px solid var(--warm-200);">100%</button>
+      </div>
+      {#if !shopAllSelected}
+        <!-- svelte-ignore a11y_click_events_have_key_events --><!-- svelte-ignore a11y_no_static_element_interactions -->
+        <span class="text-[10px] cursor-pointer underline" style="color: var(--accent);" onclick={() => selectedShops = new Set()}>Alle zeigen</span>
+      {/if}
+    </div>
+    <!-- Clickable shop legend -->
+    <div class="flex flex-wrap gap-2 mb-3">
+      {#each shopTrend.topShops as shop, si}
+        <!-- svelte-ignore a11y_click_events_have_key_events --><!-- svelte-ignore a11y_no_static_element_interactions -->
+        <span class="flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-medium cursor-pointer transition-opacity"
+          style="background: {COLORS[si % COLORS.length]}15; color: {COLORS[si % COLORS.length]}; opacity: {isShopVisible(shop) ? 1 : 0.3}; border: 1px solid {COLORS[si % COLORS.length]}{isShopVisible(shop) ? '40' : '15'};"
+          onclick={() => toggleShop(shop)}>
+          <span class="w-2 h-2 rounded-full" style="background: {COLORS[si % COLORS.length]};"></span>
+          {shop}
+        </span>
+      {/each}
+    </div>
+    {#if true}
+    {@const chartW = Math.max(600, shopTrend.kws.length * 70 + 40)}
+    {@const chartH = 260}
+    {@const pad = { l: 60, r: 20, t: 20, b: 30 }}
+    {@const plotW = chartW - pad.l - pad.r}
+    {@const plotH = chartH - pad.t - pad.b}
+    {@const barW = plotW / shopTrend.kws.length}
     <div class="overflow-x-auto">
-      <svg width={Math.max(600, shopTrend.kws.length * 70 + 180)} height={280} style="font-family: var(--font-body);">
+      <svg width={chartW} height={chartH} style="font-family: var(--font-body);">
+        <!-- Y grid + labels -->
         {#each [0, 0.25, 0.5, 0.75, 1] as frac}
-          {@const maxV = Math.max(...shopTrend.data.map(row => Math.max(...row)), 1)}
-          {@const yy = 20 + (1 - frac) * 230}
-          <line x1={60} x2={shopTrend.kws.length * 70 + 60} y1={yy} y2={yy} stroke="var(--warm-100)" stroke-width="1" />
-          <text x={56} y={yy + 4} text-anchor="end" fill="var(--warm-400)" font-size="8">{fmtEUR(maxV * frac)}</text>
+          {@const yy = pad.t + (1 - frac) * plotH}
+          {@const maxV = shopChartMode === 'bar100' ? 100 : Math.max(...shopTrend.data.map(row => { let s = 0; visibleShopIndices.forEach(si => s += row[si]); return s; }), ...shopTrend.data.map(row => { let mx = 0; visibleShopIndices.forEach(si => { if (row[si] > mx) mx = row[si]; }); return mx; }), 1)}
+          <line x1={pad.l} x2={chartW - pad.r} y1={yy} y2={yy} stroke="var(--warm-100)" stroke-width="1" />
+          <text x={pad.l - 4} y={yy + 4} text-anchor="end" fill="var(--warm-400)" font-size="8">{shopChartMode === 'bar100' ? (frac * 100).toFixed(0) + '%' : fmtEUR(maxV * frac)}</text>
         {/each}
-        {#each shopTrend.kws as kw, ki}<text x={60 + ki * 70 + 35} y={268} text-anchor="middle" fill="var(--warm-500)" font-size="9">KW{kw}</text>{/each}
-        {#each shopTrend.topShops as shop, si}
-          {@const color = COLORS[si % COLORS.length]}
-          <polyline points={shopPolyPoints(si)} fill="none" stroke={color} stroke-width="1.5" opacity="0.7" />
-          {#each shopTrend.data as row, ki}
-            {@const maxV = Math.max(...shopTrend.data.map(r => Math.max(...r)), 1)}
-            <circle cx={60 + ki * 70 + 35} cy={20 + (1 - row[si] / maxV) * 230} r="2.5" fill={color} opacity="0.8" />
+        <!-- KW labels -->
+        {#each shopTrend.kws as kw, ki}
+          <text x={pad.l + ki * barW + barW / 2} y={chartH - 5} text-anchor="middle" fill="var(--warm-500)" font-size="9">KW{kw}</text>
+        {/each}
+
+        {#if shopChartMode === 'line'}
+          <!-- Line chart -->
+          {#each shopTrend.topShops as shop, si}
+            {#if isShopVisible(shop)}
+              {@const color = COLORS[si % COLORS.length]}
+              {@const maxV = Math.max(...shopTrend.data.map(row => { let mx = 0; visibleShopIndices.forEach(i => { if (row[i] > mx) mx = row[i]; }); return mx; }), 1)}
+              <polyline points={shopTrend.data.map((row, ki) => '' + (pad.l + ki * barW + barW / 2) + ',' + (pad.t + (1 - row[si] / maxV) * plotH)).join(' ')} fill="none" stroke={color} stroke-width="1.5" opacity="0.8" />
+              {#each shopTrend.data as row, ki}
+                <circle cx={pad.l + ki * barW + barW / 2} cy={pad.t + (1 - row[si] / maxV) * plotH} r="2.5" fill={color} opacity="0.9" />
+              {/each}
+            {/if}
           {/each}
-        {/each}
-        {#each shopTrend.topShops as shop, si}
-          {@const lx = shopTrend.kws.length * 70 + 70}
-          <rect x={lx} y={20 + si * 16} width="8" height="8" rx="2" fill={COLORS[si % COLORS.length]} />
-          <text x={lx + 12} y={20 + si * 16 + 8} fill="var(--warm-600)" font-size="8">{shop}</text>
-        {/each}
+        {:else if shopChartMode === 'bar'}
+          <!-- Stacked bar chart -->
+          {#each shopTrend.kws as kw, ki}
+            {@const stackMax = (() => { let s = 0; visibleShopIndices.forEach(si => s += shopTrend.data[ki][si]); return s; })()}
+            {@const globalMax = Math.max(...shopTrend.data.map(row => { let s = 0; visibleShopIndices.forEach(si => s += row[si]); return s; }), 1)}
+            {@const bx = pad.l + ki * barW + 4}
+            {@const bw = barW - 8}
+            {#each visibleShopIndices as si, vi}
+              {@const val = shopTrend.data[ki][si]}
+              {@const below = (() => { let s = 0; for (let j = 0; j < vi; j++) s += shopTrend.data[ki][visibleShopIndices[j]]; return s; })()}
+              {@const h = (val / globalMax) * plotH}
+              {@const y = pad.t + plotH - (below / globalMax) * plotH - h}
+              <rect x={bx} y={y} width={bw} height={Math.max(h, 0)} rx="2" fill={COLORS[si % COLORS.length]} opacity="0.78" />
+            {/each}
+          {/each}
+        {:else}
+          <!-- 100% stacked bar chart -->
+          {#each shopTrend.kws as kw, ki}
+            {@const stackTotal = (() => { let s = 0; visibleShopIndices.forEach(si => s += shopTrend.data[ki][si]); return s; })()}
+            {@const bx = pad.l + ki * barW + 4}
+            {@const bw = barW - 8}
+            {#if stackTotal > 0}
+              {#each visibleShopIndices as si, vi}
+                {@const val = shopTrend.data[ki][si]}
+                {@const below = (() => { let s = 0; for (let j = 0; j < vi; j++) s += shopTrend.data[ki][visibleShopIndices[j]]; return s; })()}
+                {@const pct = val / stackTotal}
+                {@const belowPct = below / stackTotal}
+                {@const h = pct * plotH}
+                {@const y = pad.t + plotH - belowPct * plotH - h}
+                <rect x={bx} y={y} width={bw} height={Math.max(h, 0)} rx="2" fill={COLORS[si % COLORS.length]} opacity="0.78" />
+              {/each}
+            {/if}
+          {/each}
+        {/if}
       </svg>
     </div>
+    {/if}
   </div>
 
   <!-- Artikel-Matrix -->
