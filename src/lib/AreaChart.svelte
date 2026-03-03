@@ -15,6 +15,7 @@
   let yMode = $state<YMode>('umsatz');
   let topN = $state(10);
   let pctMode = $state(false);
+  let hideSonstige = $state(false);
   let hoveredPoint = $state<{ x: number; y: number; kw: string; cat: string; value: number; pct: number } | null>(null);
   let containerEl: HTMLDivElement | undefined = $state();
   let width = $state(900);
@@ -82,10 +83,12 @@
     // If more than topN, group the rest as "Sonstige"
     if (series.length > topN) {
       const top = series.slice(0, topN);
-      const rest = series.slice(topN);
-      const sonstValues = kws.map((_, ki) => rest.reduce((s, r) => s + r.values[ki], 0));
-      const sonstTotal = sonstValues.reduce((s, v) => s + v, 0);
-      top.push({ cat: 'Sonstige', values: sonstValues, total: sonstTotal, bildId: '' });
+      if (!hideSonstige) {
+        const rest = series.slice(topN);
+        const sonstValues = kws.map((_, ki) => rest.reduce((s, r) => s + r.values[ki], 0));
+        const sonstTotal = sonstValues.reduce((s, v) => s + v, 0);
+        top.push({ cat: 'Sonstige', values: sonstValues, total: sonstTotal, bildId: '' });
+      }
       series = top;
     }
 
@@ -218,6 +221,10 @@
           style="background: {pctMode ? 'var(--accent)' : 'white'}; color: {pctMode ? 'white' : 'var(--warm-500)'}; border-left: 1px solid var(--warm-200);">100%</button>
       </div>
     </div>
+    <label class="flex items-center gap-2 cursor-pointer self-end pb-0.5">
+      <input type="checkbox" bind:checked={hideSonstige} class="accent-[var(--accent)]" />
+      <span class="text-[11px]" style="color: var(--warm-500);">Sonstige ausblenden</span>
+    </label>
   </div>
 
   <!-- Chart -->
