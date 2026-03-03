@@ -139,6 +139,65 @@
       return `${i === 0 ? 'M' : 'L'}${x},${y}`;
     }).join(' ');
   }
+
+  // Treemaps
+  type TreemapField = 'Kollektion' | 'FormPfad' | 'Artikel';
+  let tmField = $state<TreemapField>('Kollektion');
+  let tmTop20 = $state(false);
+  let tmHideSonstige = $state(false);
+  interface TmNode { label: string; value: number; bildId: string; }
+  let treemapNodes = $derived.by((): TmNode[] => {
+    const m = new Map<string, { value: number; bildId: string }>();
+    for (const r of data) {
+      let key: string; let bildId = '';
+      if (tmField === 'Artikel') { const bid = String(r.BildId); if (!bid || bid === '0') continue; key = bid; bildId = bid; }
+      else { key = (r as any)[tmField] || '(leer)'; }
+      if (!m.has(key)) m.set(key, { value: 0, bildId });
+      const a = m.get(key)!;
+      a.value += (Number(r.EinzelPreis) || 0) * (Number(r.Anzahl) || 0);
+      if (!a.bildId && bildId) a.bildId = bildId;
+    }
+    let nodes = [...m.entries()].map(([label, a]) => ({ label, value: a.value, bildId: a.bildId })).sort((a, b) => b.value - a.value);
+    const limit = tmTop20 ? 20 : nodes.length;
+    if (nodes.length > limit) {
+      const top = nodes.slice(0, limit);
+      if (!tmHideSonstige) { const sv = nodes.slice(limit).reduce((s, n) => s + n.value, 0); if (sv > 0) top.push({ label: 'Sonstige', value: sv, bildId: '' }); }
+      nodes = top;
+    }
+    return nodes;
+  });
+  function layoutTreemap(nodes: TmNode[], w: number, h: number): { x: number; y: number; w: number; h: number; node: TmNode }[] {
+    const total = nodes.reduce((s, n) => s + n.value, 0);
+    if (total <= 0 || !nodes.length) return [];
+    const rects: { x: number; y: number; w: number; h: number; node: TmNode }[] = [];
+    let cx = 0, cy = 0, rw = w, rh = h, remaining = [...nodes], remTotal = total;
+    while (remaining.length > 0) {
+      const isWide = rw >= rh; const side = isWide ? rh : rw;
+      let row: TmNode[] = [], rowTotal = 0;
+      for (const n of remaining) {
+        const worstOld = row.length > 0 ? wRatio(row, rowTotal, side, remTotal) : Infinity;
+        const worstNew = wRatio([...row, n], rowTotal + n.value, side, remTotal);
+        if (row.length === 0 || worstNew <= worstOld) { row.push(n); rowTotal += n.value; } else break;
+      }
+      const stripSize = isWide ? rw * (rowTotal / remTotal) : rh * (rowTotal / remTotal);
+      let offset = 0;
+      for (const n of row) {
+        const cellSize = side * (n.value / rowTotal);
+        if (isWide) rects.push({ x: cx, y: cy + offset, w: stripSize, h: cellSize, node: n });
+        else rects.push({ x: cx + offset, y: cy, w: cellSize, h: stripSize, node: n });
+        offset += cellSize;
+      }
+      if (isWide) { cx += stripSize; rw -= stripSize; } else { cy += stripSize; rh -= stripSize; }
+      remaining = remaining.slice(row.length); remTotal -= rowTotal;
+    }
+    return rects;
+  }
+  function wRatio(row: TmNode[], rowTotal: number, side: number, remTotal: number): number {
+    const ss = (rowTotal / remTotal) * side; if (ss <= 0) return Infinity;
+    let worst = 0;
+    for (const n of row) { const cs = (n.value / rowTotal) * side; const r = Math.max(ss / cs, cs / ss); if (r > worst) worst = r; }
+    return worst;
+  }
 </script>
 
 <div class="space-y-6">
@@ -176,6 +235,71 @@
         {/each}
       </div>
     </div>
+  </div>
+
+  <!-- Treemaps -->
+  <div class="rounded-xl p-4" style="background: white; border: 1px solid var(--warm-200);">
+    <div class="flex flex-wrap items-center gap-4 mb-3">
+      <h3 class="text-xs font-semibold uppercase tracking-[0.15em]" style="color: var(--warm-400);">Treemap</h3>
+      <div class="flex rounded-lg overflow-hidden" style="border: 1px solid var(--warm-200);">
+        {#each (["Kollektion", "FormPfad", "Artikel"] as const) as opt, i}
+          <button onclick={() => tmField = opt} class="px-3 py-1 text-[11px] font-medium"
+            style="background: {tmField === opt ? "var(--accent)" : "white"}; color: {tmField === opt ? "white" : "var(--warm-500)"}; {i > 0 ? "border-left: 1px solid var(--warm-200)" : ""};">
+            {opt}
+          </button>
+        {/each}
+      </div>
+      <label class="flex items-center gap-2 cursor-pointer">
+        <input type="checkbox" bind:checked={tmTop20} class="accent-[var(--accent)]" />
+        <span class="text-[11px]" style="color: var(--warm-500);">Nur Top 20</span>
+      </label>
+      <label class="flex items-center gap-2 cursor-pointer">
+        <input type="checkbox" bind:checked={tmHideSonstige} class="accent-[var(--accent)]" />
+        <span class="text-[11px]" style="color: var(--warm-500);">Sonstige ausblenden</span>
+      </label>
+    </div>
+    {#if true}
+    {@const tmW = 900}
+    {@const tmH = 420}
+    {@const rects = layoutTreemap(treemapNodes, tmW, tmH)}
+    {@const tmTotal = treemapNodes.reduce((s, n) => s + n.value, 0)}
+    <div class="overflow-x-auto">
+      <svg viewBox="0 0 {tmW} {tmH}" class="w-full" style="max-height: 460px;">
+        {#each rects as rect, i}
+          {@const pct = tmTotal > 0 ? (rect.node.value / tmTotal * 100) : 0}
+          {@const showLabel = rect.w > 45 && rect.h > 28}
+          {@const showImg = tmField === "Artikel" && rect.node.bildId && rect.w > 30 && rect.h > 30}
+          <g>
+            <rect x={rect.x + 1} y={rect.y + 1} width={Math.max(rect.w - 2, 0)} height={Math.max(rect.h - 2, 0)}
+              rx="4" fill={rect.node.label === "Sonstige" ? "var(--warm-200)" : COLORS[i % COLORS.length]}
+              opacity={rect.node.label === "Sonstige" ? 0.6 : 0.78} />
+            {#if showImg}
+              <image href={imgUrl(rect.node.bildId, 120)}
+                x={rect.x + rect.w / 2 - Math.min(rect.w - 8, rect.h - 22, 60) / 2}
+                y={rect.y + 3}
+                width={Math.min(rect.w - 8, rect.h - 22, 60)}
+                height={Math.min(rect.w - 8, rect.h - 22, 60)}
+                clip-path="inset(0 round 4px)" />
+              {#if rect.h > 50}
+                <text x={rect.x + rect.w / 2} y={rect.y + rect.h - 6} text-anchor="middle"
+                  fill="white" font-size="8" font-weight="600" style="text-shadow: 0 1px 3px rgba(0,0,0,0.5);">{fmtEUR(rect.node.value)}</text>
+              {/if}
+            {:else if showLabel}
+              <text x={rect.x + rect.w / 2} y={rect.y + rect.h / 2 - (rect.h > 40 ? 5 : 0)} text-anchor="middle" dominant-baseline="central"
+                fill="white" font-size={rect.w > 80 ? "9" : "7"} font-weight="600" style="text-shadow: 0 1px 2px rgba(0,0,0,0.4);">
+                {rect.node.label.length > (rect.w > 80 ? 18 : 10) ? rect.node.label.slice(0, rect.w > 80 ? 16 : 8) + "…" : rect.node.label}
+              </text>
+              {#if rect.h > 40}
+                <text x={rect.x + rect.w / 2} y={rect.y + rect.h / 2 + 10} text-anchor="middle"
+                  fill="rgba(255,255,255,0.8)" font-size="8">{fmtEUR(rect.node.value)} ({pct.toFixed(1)}%)</text>
+              {/if}
+            {/if}
+            <title>{rect.node.label}: {fmtEUR(rect.node.value)} ({pct.toFixed(1)}%)</title>
+          </g>
+        {/each}
+      </svg>
+    </div>
+    {/if}
   </div>
 
   <!-- Row 2: Top 10 Kollektionen + Top 3 by Typ -->
