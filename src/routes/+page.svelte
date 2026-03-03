@@ -30,14 +30,9 @@
   let loading = $state(true);
   let activeTab = $state<TabId>('kollektion');
 
-  // Pre-aggregated data per tab
-  let tabData = $state<Record<TabId, GroupNode[]>>({ kollektion: [], form: [], art: [], formpfad: [], preis: [], kasse: [], bubble: [], custom: [] });
-  // For Preis tab: two sub-modes
+  // Pre-aggregated data — all derived, no $effect needed
   let preisSubTab = $state<'formpfad' | 'kollektion'>('formpfad');
-  let preisData = $state<Record<'formpfad' | 'kollektion', GroupNode[]>>({ formpfad: [], kollektion: [] });
-  // For Kollektion tab: direct articles vs SubKollektion
   let kollSubMode = $state<'artikel' | 'subkollektion'>('artikel');
-  let kollData = $state<Record<'artikel' | 'subkollektion', GroupNode[]>>({ artikel: [], subkollektion: [] });
   // For Custom tab: 4 selectable levels
   type DimOption = 'Kollektion' | 'FormPfad' | 'Kasse' | 'SubKollektion' | 'Form' | 'Preisgruppe' | '';
   const DIM_OPTIONS: { value: DimOption; label: string }[] = [
@@ -63,10 +58,6 @@
   let availableYears = $state<string[]>([]);
   let availableMonths = $state<string[]>([]);
   let availableKWs = $state<string[]>([]);
-  let totalUmsatz = $state(0);
-  let totalAnzahl = $state(0);
-  let compTotalUmsatz = $state(0);
-  let compTotalAnzahl = $state(0);
 
   // UI state
   let expandedL1 = $state(new Set<string>());
@@ -138,58 +129,41 @@
     return map; // Will be computed per-tab in display
   });
 
-  // ─── Reactive aggregation ───
-  function buildTabData(rows: RawRow[]) {
-    let total = 0;
-    for (const r of rows) total += (Number(r.EinzelPreis) || 0) * (Number(r.Anzahl) || 0);
-
-    const groupBy = (field: string, subFields?: string[]) => {
-      const map = new Map<string, RawRow[]>();
-      for (const r of rows) { const k = (r as any)[field] || '(leer)'; if (!map.has(k)) map.set(k, []); map.get(k)!.push(r); }
-      return Array.from(map.entries()).map(([n, rr]) => buildGroup(n, rr, total, subFields)).sort((a, b) => b.umsatz - a.umsatz);
-    };
-
-    return { total, groupBy };
+  // ─── Reactive aggregation (all $derived, no $effect) ───
+  function groupByField(rows: RawRow[], field: string, total: number, subFields?: string[]): GroupNode[] {
+    const map = new Map<string, RawRow[]>();
+    for (const r of rows) { const k = (r as any)[field] || '(leer)'; if (!map.has(k)) map.set(k, []); map.get(k)!.push(r); }
+    return Array.from(map.entries()).map(([n, rr]) => buildGroup(n, rr, total, subFields)).sort((a, b) => b.umsatz - a.umsatz);
   }
 
-  // Rebuild all tabs reactively when filteredData changes
-  $effect(() => {
+  let agg = $derived.by(() => {
     const rows = filteredData;
-    if (!rows.length && !loading) { 
-      totalUmsatz = 0; totalAnzahl = 0;
-      tabData.kollektion = []; tabData.form = []; tabData.art = []; tabData.formpfad = [];
-      tabData.preis = []; tabData.kasse = []; tabData.bubble = []; tabData.custom = [];
-      kollData.artikel = []; kollData.subkollektion = [];
-      preisData.formpfad = []; preisData.kollektion = [];
-      return;
-    }
-    if (!rows.length) return;
-    const { total, groupBy } = buildTabData(rows);
-    totalUmsatz = total;
-    totalAnzahl = rows.reduce((s, r) => s + (Number(r.Anzahl) || 0), 0);
+    if (!rows.length) return null;
+    let total = 0;
+    for (const r of rows) total += (Number(r.EinzelPreis) || 0) * (Number(r.Anzahl) || 0);
+    const totalAnzahl = rows.reduce((s, r) => s + (Number(r.Anzahl) || 0), 0);
 
-    kollData.artikel = groupBy('Kollektion');
-    kollData.subkollektion = groupBy('Kollektion', ['SubKollektion']);
-    tabData.kollektion = kollData.artikel;
-    tabData.form = groupBy('Form', ['Kollektion']);
-    tabData.art = groupBy('Art', ['Kollektion']);
-    tabData.formpfad = groupBy('FormPfad', ['Form', 'Kollektion']);
+    const kollArtikel = groupByField(rows, 'Kollektion', total);
+    const kollSub = groupByField(rows, 'Kollektion', total, ['SubKollektion']);
+    const form = groupByField(rows, 'Form', total, ['Kollektion']);
+    const art = groupByField(rows, 'Art', total, ['Kollektion']);
+    const formpfad = groupByField(rows, 'FormPfad', total, ['Form', 'Kollektion']);
+    const kasse = groupByField(rows, 'Kasse', total, ['Kollektion']);
 
     const preisRanges = ['0 – 20 €', '20 – 50 €', '50 – 120 €', '120 – 250 €', 'über 250 €'];
     const byPreis = new Map<string, RawRow[]>();
     for (const r of rows) { const pg = (r as any).Preisgruppe; if (!byPreis.has(pg)) byPreis.set(pg, []); byPreis.get(pg)!.push(r); }
-    preisData.formpfad = preisRanges.filter(p => byPreis.has(p)).map(p => buildGroup(p, byPreis.get(p)!, total, ['Form', 'Kollektion']));
-    preisData.kollektion = preisRanges.filter(p => byPreis.has(p)).map(p => buildGroup(p, byPreis.get(p)!, total, ['Kollektion']));
-    tabData.preis = preisData.formpfad;
-    tabData.kasse = groupBy('Kasse', ['Kollektion']);
+    const preisFP = preisRanges.filter(p => byPreis.has(p)).map(p => buildGroup(p, byPreis.get(p)!, total, ['Form', 'Kollektion']));
+    const preisKoll = preisRanges.filter(p => byPreis.has(p)).map(p => buildGroup(p, byPreis.get(p)!, total, ['Kollektion']));
+
+    return { total, totalAnzahl, kollArtikel, kollSub, form, art, formpfad, kasse, preisFP, preisKoll };
   });
 
-  // Compare totals
-  $effect(() => {
-    if (!compareData.length) { compTotalUmsatz = 0; compTotalAnzahl = 0; return; }
-    compTotalUmsatz = compareData.reduce((s, r) => s + (Number(r.EinzelPreis) || 0) * (Number(r.Anzahl) || 0), 0);
-    compTotalAnzahl = compareData.reduce((s, r) => s + (Number(r.Anzahl) || 0), 0);
-  });
+  let totalUmsatz = $derived(agg?.total ?? 0);
+  let totalAnzahl = $derived(agg?.totalAnzahl ?? 0);
+
+  let compTotalUmsatz = $derived(compareData.reduce((s, r) => s + (Number(r.EinzelPreis) || 0) * (Number(r.Anzahl) || 0), 0));
+  let compTotalAnzahl = $derived(compareData.reduce((s, r) => s + (Number(r.Anzahl) || 0), 0));
 
   // Compare L1 lookup for showing (vergleich) in the table
   let compGroupLookup = $derived.by(() => {
@@ -241,8 +215,7 @@
     if (activeTab !== 'custom' || !filteredData.length || !customDim1) return [];
     const dims = [customDim1, customDim2, customDim3, customDim4].filter(d => d !== '') as string[];
     if (dims.length === 0) return [];
-    let total = 0;
-    for (const r of filteredData) total += (Number(r.EinzelPreis) || 0) * (Number(r.Anzahl) || 0);
+    let total = agg?.total ?? 0;
     const byFirst = new Map<string, RawRow[]>();
     for (const r of filteredData) { const k = (r as any)[dims[0]] || '(leer)'; if (!byFirst.has(k)) byFirst.set(k, []); byFirst.get(k)!.push(r); }
     return Array.from(byFirst.entries())
@@ -250,12 +223,19 @@
       .sort((a, b) => b.umsatz - a.umsatz);
   });
 
-  let currentGroups = $derived(
-    activeTab === 'preis' ? preisData[preisSubTab] :
-    activeTab === 'kollektion' ? kollData[kollSubMode] :
-    activeTab === 'custom' ? customGroups :
-    tabData[activeTab]
-  );
+  let currentGroups = $derived.by(() => {
+    if (!agg) return [];
+    switch (activeTab) {
+      case 'kollektion': return kollSubMode === 'subkollektion' ? agg.kollSub : agg.kollArtikel;
+      case 'form': return agg.form;
+      case 'art': return agg.art;
+      case 'formpfad': return agg.formpfad;
+      case 'preis': return preisSubTab === 'kollektion' ? agg.preisKoll : agg.preisFP;
+      case 'kasse': return agg.kasse;
+      case 'custom': return customGroups;
+      default: return [];
+    }
+  });
 
   let filtered = $derived.by(() => {
     let list = currentGroups;
