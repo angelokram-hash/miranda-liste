@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import BubbleChart from '$lib/BubbleChart.svelte';
   import BarChart from '$lib/BarChart.svelte';
+  import PieChart from '$lib/PieChart.svelte';
 
   // ─── Types ───
   interface RawRow {
@@ -24,7 +25,7 @@
     subGroups?: GroupNode[];           // optional mid-level (Kollektionen inside Form/Art)
   }
 
-  type TabId = 'kollektion' | 'form' | 'art' | 'formpfad' | 'preis' | 'kasse' | 'custom' | 'bubble' | 'bar';
+  type TabId = 'kollektion' | 'form' | 'art' | 'formpfad' | 'preis' | 'kasse' | 'custom' | 'bubble' | 'bar' | 'pie';
 
   // ─── State ───
   let allData: RawRow[] = $state([]);
@@ -205,10 +206,11 @@
   }
 
   function fmtDelta(cur: number, prev: number): string {
-    if (!prev) return '';
-    const d = ((cur - prev) / prev) * 100;
-    const sign = d >= 0 ? '+' : '';
-    return `(${sign}${d.toFixed(0)}%)`;
+    if (!prev || prev === 0) return '';
+    const pct = ((cur / prev) - 1) * 100;
+    if (pct > 0) return `(+${pct.toFixed(0)}%)`;
+    if (pct < 0) return `(${pct.toFixed(0)}%)`;
+    return '(±0%)';
   }
 
   // Custom tab: build dynamically
@@ -365,6 +367,7 @@
   const CHART_TABS: { id: TabId; label: string }[] = [
     { id: 'bar', label: 'Säulendiagramm' },
     { id: 'bubble', label: 'Bubble Diagram' },
+    { id: 'pie', label: 'Tortendiagramm' },
   ];
 </script>
 
@@ -529,12 +532,12 @@
         <div class="rounded-xl p-4" style="background: white; border: 1px solid var(--warm-200);">
           <p class="text-[9px] font-semibold uppercase tracking-[0.15em]" style="color: var(--warm-400);">Umsatz</p>
           <p class="text-lg font-bold mt-0.5 tabular-nums" style="color: var(--warm-800);">{fmtEUR(totalUmsatz)}</p>
-          {#if compTotalUmsatz > 0}<p class="text-[10px] tabular-nums" style="color: {totalUmsatz >= compTotalUmsatz ? 'var(--accent)' : '#c06050'};">Vgl: {fmtEUR(compTotalUmsatz)} {fmtDelta(totalUmsatz, compTotalUmsatz)}</p>{/if}
+          {#if compTotalUmsatz > 0}<p class="text-[10px] tabular-nums" style="color: {totalUmsatz > compTotalUmsatz ? '#6b8e5a' : totalUmsatz < compTotalUmsatz ? '#c06050' : 'var(--warm-400)'};">Vgl: {fmtEUR(compTotalUmsatz)} {fmtDelta(totalUmsatz, compTotalUmsatz)}</p>{/if}
         </div>
         <div class="rounded-xl p-4" style="background: white; border: 1px solid var(--warm-200);">
           <p class="text-[9px] font-semibold uppercase tracking-[0.15em]" style="color: var(--warm-400);">Stück</p>
           <p class="text-lg font-bold mt-0.5 tabular-nums" style="color: var(--warm-800);">{fmtNum(totalAnzahl)}</p>
-          {#if compTotalAnzahl > 0}<p class="text-[10px] tabular-nums" style="color: {totalAnzahl >= compTotalAnzahl ? 'var(--accent)' : '#c06050'};">Vgl: {fmtNum(compTotalAnzahl)} {fmtDelta(totalAnzahl, compTotalAnzahl)}</p>{/if}
+          {#if compTotalAnzahl > 0}<p class="text-[10px] tabular-nums" style="color: {totalAnzahl > compTotalAnzahl ? '#6b8e5a' : totalAnzahl < compTotalAnzahl ? '#c06050' : 'var(--warm-400)'};">Vgl: {fmtNum(compTotalAnzahl)} {fmtDelta(totalAnzahl, compTotalAnzahl)}</p>{/if}
         </div>
         <div class="rounded-xl p-4" style="background: white; border: 1px solid var(--warm-200);"><p class="text-[9px] font-semibold uppercase tracking-[0.15em]" style="color: var(--warm-400);">Einträge</p><p class="text-lg font-bold mt-0.5" style="color: var(--warm-800);">{fmtNum(currentGroups.length)}</p></div>
         <div class="rounded-xl p-4" style="background: white; border: 1px solid var(--warm-200);"><p class="text-[9px] font-semibold uppercase tracking-[0.15em]" style="color: var(--warm-400);">⌀ Preis</p><p class="text-lg font-bold mt-0.5 tabular-nums" style="color: var(--warm-800);">{fmtEUR(totalAnzahl > 0 ? totalUmsatz / totalAnzahl : 0)}</p></div>
@@ -551,7 +554,13 @@
     {:else if activeTab === 'bar'}
       <div class="max-w-6xl mx-auto px-5 pb-10">
         <div class="rounded-2xl p-5" style="background: white; border: 1px solid var(--warm-200); box-shadow: 0 4px 20px rgba(0,0,0,0.03);">
-          <BarChart data={filteredData} />
+          <BarChart data={filteredData} compareData={compareData} />
+        </div>
+      </div>
+    {:else if activeTab === 'pie'}
+      <div class="max-w-6xl mx-auto px-5 pb-10">
+        <div class="rounded-2xl p-5" style="background: white; border: 1px solid var(--warm-200); box-shadow: 0 4px 20px rgba(0,0,0,0.03);">
+          <PieChart data={filteredData} />
         </div>
       </div>
     {:else}
@@ -591,8 +600,8 @@
                   <p class="text-sm font-medium truncate" style="color: var(--warm-800);">{g1.name}</p>
                   <p class="text-[10px]" style="color: var(--warm-400);">{hasSubGroups ? `${g1.subGroups?.length} Kollektionen · ` : ''}{g1.articles.length} Artikel</p>
                 </div>
-                <p class="text-sm text-right tabular-nums font-medium" style="color: var(--warm-700);">{fmtEUR(g1.umsatz)}{#if comp}<span class="text-[9px] ml-1" style="color: {g1.umsatz >= (comp.umsatz||1) ? 'var(--accent)' : '#c06050'};">{fmtDelta(g1.umsatz, comp.umsatz)}</span>{/if}</p>
-                <p class="text-sm text-right tabular-nums" style="color: var(--warm-600);">{fmtNum(g1.anzahl)}{#if comp}<span class="text-[9px] ml-1" style="color: {g1.anzahl >= (comp.anzahl||1) ? 'var(--accent)' : '#c06050'};">{fmtDelta(g1.anzahl, comp.anzahl)}</span>{/if}</p>
+                <p class="text-sm text-right tabular-nums font-medium" style="color: var(--warm-700);">{fmtEUR(g1.umsatz)}{#if comp && comp.umsatz > 0}<span class="text-[9px] ml-1" style="color: {g1.umsatz > comp.umsatz ? '#6b8e5a' : g1.umsatz < comp.umsatz ? '#c06050' : 'var(--warm-400)'};">{fmtDelta(g1.umsatz, comp.umsatz)}</span>{/if}</p>
+                <p class="text-sm text-right tabular-nums" style="color: var(--warm-600);">{fmtNum(g1.anzahl)}{#if comp && comp.anzahl > 0}<span class="text-[9px] ml-1" style="color: {g1.anzahl > comp.anzahl ? '#6b8e5a' : g1.anzahl < comp.anzahl ? '#c06050' : 'var(--warm-400)'};">{fmtDelta(g1.anzahl, comp.anzahl)}</span>{/if}</p>
                 <p class="text-sm text-right tabular-nums" style="color: var(--warm-600);">{fmtEUR(g1.avgPreis)}</p>
                 <div class="text-right">
                   <p class="text-sm tabular-nums font-medium" style="color: var(--accent);">{fmtPct(g1.anteil)}</p>
