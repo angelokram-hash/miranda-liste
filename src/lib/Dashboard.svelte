@@ -273,6 +273,7 @@
 
   // Artikel-Matrix — independent time periods
   let mxPeriod = $state<'tag' | 'woche' | 'monat' | 'jahr'>('woche');
+  let mxSortBy = $state<'umsatz' | 'anzahl'>('umsatz');
 
   interface MxCol { label: string; rows: MxArt[]; }
   interface MxArt { bildId: string; nr: string; koll: string; formPfad: string; umsatz: number; anzahl: number; }
@@ -310,7 +311,7 @@
         const a = m.get(bid)!; const an = Number(r.Anzahl) || 0;
         a.umsatz += (Number(r.EinzelPreis) || 0) * an; a.anzahl += an;
       }
-      const top = [...m.entries()].map(([bildId, a]) => ({ bildId, ...a })).sort((a, b) => b.umsatz - a.umsatz).slice(0, 15);
+      const top = [...m.entries()].map(([bildId, a]) => ({ bildId, ...a })).sort((a, b) => mxSortBy === 'umsatz' ? b.umsatz - a.umsatz : b.anzahl - a.anzahl).slice(0, 15);
       return { label: b.label, rows: top };
     });
   });
@@ -631,6 +632,12 @@
           <button onclick={() => mxPeriod = val} class="px-3 py-1 text-[10px] font-medium"
             style="background: {mxPeriod === val ? 'var(--accent)' : 'white'}; color: {mxPeriod === val ? 'white' : 'var(--warm-500)'}; {pi > 0 ? 'border-left: 1px solid var(--warm-200)' : ''};">{label}</button>
         {/each}
+      </div>
+      <div class="flex rounded-lg overflow-hidden" style="border: 1px solid var(--warm-200);">
+        <button onclick={() => mxSortBy = 'umsatz'} class="px-3 py-1 text-[10px] font-medium"
+          style="background: {mxSortBy === 'umsatz' ? 'var(--accent)' : 'white'}; color: {mxSortBy === 'umsatz' ? 'white' : 'var(--warm-500)'};">Umsatz</button>
+        <button onclick={() => mxSortBy = 'anzahl'} class="px-3 py-1 text-[10px] font-medium"
+          style="background: {mxSortBy === 'anzahl' ? 'var(--accent)' : 'white'}; color: {mxSortBy === 'anzahl' ? 'white' : 'var(--warm-500)'}; border-left: 1px solid var(--warm-200);">Anzahl</button>
       </div>
     </div>
     <div class="overflow-x-auto">
