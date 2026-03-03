@@ -1,0 +1,270 @@
+<script lang="ts">
+  interface RawRow {
+    Kollektion: string; BildId: string; Anzahl: number; EinzelPreis: number;
+    Form: string; Kasse: string; Art: string; Nr: string; KW: string; Monat: string;
+  }
+
+  let { data = [] }: { data: RawRow[] } = $props();
+
+  function imgUrl(bid: string, sz: number): string {
+    return `https://konplott-cdn.com/mytism/image/${bid}/${bid}.jpg?width=${sz}&height=${sz}&box=true`;
+  }
+  function fmtEUR(v: number): string { return v.toLocaleString('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }); }
+  function fmtNum(v: number): string { return v.toLocaleString('de-DE', { maximumFractionDigits: 0 }); }
+
+  const COLORS = ['#b07c3e','#6b8e5a','#5a7ea8','#c06050','#8a6ab0','#c09050','#4a8a8a','#b05a80','#7a7a4a','#508ab0','#a06a40','#6a9a6a'];
+
+  // ── Top 10 Artikel ──
+  interface TopArt { bildId: string; nr: string; umsatz: number; anzahl: number; }
+  let top10Articles = $derived.by((): TopArt[] => {
+    const m = new Map<string, { nr: string; umsatz: number; anzahl: number }>();
+    for (const r of data) {
+      const bid = String(r.BildId);
+      if (!bid || bid === '0') continue;
+      if (!m.has(bid)) m.set(bid, { nr: String(r.Nr || ''), umsatz: 0, anzahl: 0 });
+      const a = m.get(bid)!;
+      const an = Number(r.Anzahl) || 0;
+      a.umsatz += (Number(r.EinzelPreis) || 0) * an;
+      a.anzahl += an;
+    }
+    return [...m.entries()].map(([bildId, a]) => ({ bildId, ...a })).sort((a, b) => b.umsatz - a.umsatz).slice(0, 10);
+  });
+
+  // ── Top 10 Kollektionen ──
+  interface TopKoll { name: string; umsatz: number; anzahl: number; anteil: number; }
+  let top10Koll = $derived.by((): TopKoll[] => {
+    const m = new Map<string, { umsatz: number; anzahl: number }>();
+    let total = 0;
+    for (const r of data) {
+      const k = r.Kollektion;
+      if (!m.has(k)) m.set(k, { umsatz: 0, anzahl: 0 });
+      const a = m.get(k)!;
+      const an = Number(r.Anzahl) || 0;
+      const u = (Number(r.EinzelPreis) || 0) * an;
+      a.umsatz += u; a.anzahl += an; total += u;
+    }
+    return [...m.entries()].map(([name, a]) => ({ name, ...a, anteil: total > 0 ? (a.umsatz / total) * 100 : 0 })).sort((a, b) => b.umsatz - a.umsatz).slice(0, 10);
+  });
+
+  // ── Top 3 Kollektionen pro Typ ──
+  interface TypTop { typ: string; kolls: { name: string; umsatz: number }[]; totalUmsatz: number; }
+  let top3ByTyp = $derived.by((): TypTop[] => {
+    const typMap = new Map<string, Map<string, number>>();
+    const typTotal = new Map<string, number>();
+    for (const r of data) {
+      const typ = r.Art || '(keine)';
+      const koll = r.Kollektion;
+      if (!typMap.has(typ)) typMap.set(typ, new Map());
+      const km = typMap.get(typ)!;
+      const u = (Number(r.EinzelPreis) || 0) * (Number(r.Anzahl) || 0);
+      km.set(koll, (km.get(koll) || 0) + u);
+      typTotal.set(typ, (typTotal.get(typ) || 0) + u);
+    }
+    return [...typMap.entries()]
+      .map(([typ, km]) => ({
+        typ,
+        totalUmsatz: typTotal.get(typ) || 0,
+        kolls: [...km.entries()].map(([name, umsatz]) => ({ name, umsatz })).sort((a, b) => b.umsatz - a.umsatz).slice(0, 3),
+      }))
+      .sort((a, b) => b.totalUmsatz - a.totalUmsatz)
+      .filter(t => t.totalUmsatz > 0);
+  });
+
+  // ── Top 4 Kollektionen pro KW (excl. Classics & Basic) ──
+  interface KwTop { kw: string; kolls: { name: string; umsatz: number; color: string }[]; }
+  let kwTopKolls = $derived.by((): KwTop[] => {
+    const filtered = data.filter(r => r.Art !== 'Classics' && r.Art !== 'Basic');
+    const kwMap = new Map<string, Map<string, number>>();
+    for (const r of filtered) {
+      const kw = r.KW;
+      if (!kwMap.has(kw)) kwMap.set(kw, new Map());
+      const km = kwMap.get(kw)!;
+      km.set(r.Kollektion, (km.get(r.Kollektion) || 0) + (Number(r.EinzelPreis) || 0) * (Number(r.Anzahl) || 0));
+    }
+    // Collect all top kolls to assign consistent colors
+    const allTopKolls = new Set<string>();
+    for (const km of kwMap.values()) {
+      const sorted = [...km.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4);
+      for (const [name] of sorted) allTopKolls.add(name);
+    }
+    const kollColorMap = new Map<string, string>();
+    let ci = 0;
+    for (const k of allTopKolls) { kollColorMap.set(k, COLORS[ci % COLORS.length]); ci++; }
+
+    return [...kwMap.entries()]
+      .sort((a, b) => Number(a[0]) - Number(b[0]))
+      .map(([kw, km]) => ({
+        kw,
+        kolls: [...km.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4)
+          .map(([name, umsatz]) => ({ name, umsatz, color: kollColorMap.get(name) || '#999' })),
+      }));
+  });
+
+  // ── Shop Umsatzverlauf pro KW ──
+  interface ShopKw { kw: string; shops: { name: string; umsatz: number }[]; }
+  let shopTrend = $derived.by(() => {
+    const kwShopMap = new Map<string, Map<string, number>>();
+    const shopTotals = new Map<string, number>();
+    for (const r of data) {
+      const kw = r.KW;
+      const shop = r.Kasse;
+      if (!kwShopMap.has(kw)) kwShopMap.set(kw, new Map());
+      const sm = kwShopMap.get(kw)!;
+      const u = (Number(r.EinzelPreis) || 0) * (Number(r.Anzahl) || 0);
+      sm.set(shop, (sm.get(shop) || 0) + u);
+      shopTotals.set(shop, (shopTotals.get(shop) || 0) + u);
+    }
+    // Top 10 shops by total
+    const topShops = [...shopTotals.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(e => e[0]);
+    const kws = [...kwShopMap.keys()].sort((a, b) => Number(a) - Number(b));
+
+    return { kws, topShops, data: kws.map(kw => {
+      const sm = kwShopMap.get(kw)!;
+      return topShops.map(shop => sm.get(shop) || 0);
+    }) };
+  });
+
+  // Mini line chart helpers
+  function miniPath(values: number[], w: number, h: number, pad: number): string {
+    if (values.length < 2) return '';
+    const max = Math.max(...values, 1);
+    return values.map((v, i) => {
+      const x = pad + (i / (values.length - 1)) * (w - pad * 2);
+      const y = pad + (1 - v / max) * (h - pad * 2);
+      return `${i === 0 ? 'M' : 'L'}${x},${y}`;
+    }).join(' ');
+  }
+</script>
+
+<div class="space-y-6">
+  <!-- Row 1: Top 10 Artikel -->
+  <div>
+    <h3 class="text-xs font-semibold uppercase tracking-[0.15em] mb-3" style="color: var(--warm-400); font-family: var(--font-body);">Top 10 Artikel</h3>
+    <div class="flex gap-3 overflow-x-auto pb-2">
+      {#each top10Articles as art, i}
+        <div class="flex-shrink-0 w-24">
+          <div class="relative">
+            <div class="w-24 h-24 rounded-xl overflow-hidden shadow-sm" style="border: 1.5px solid var(--warm-200);">
+              <img src={imgUrl(art.bildId, 200)} alt="" class="w-full h-full object-cover" loading="lazy" onerror={(e) => { (e.currentTarget as HTMLImageElement).style.display='none'; }} />
+            </div>
+            <div class="absolute -top-1.5 -left-1.5 w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold" style="background: var(--accent); color: white;">
+              {i + 1}
+            </div>
+          </div>
+          <div class="mt-1.5 text-center">
+            <p class="text-[10px] font-semibold tabular-nums" style="color: var(--warm-700);">{fmtEUR(art.umsatz)}</p>
+            <p class="text-[9px] tabular-nums" style="color: var(--warm-400);">{fmtNum(art.anzahl)} Stk</p>
+            {#if art.nr}<a href="https://www.konplott.com/go/{art.nr}" target="_blank" rel="noopener" class="text-[8px] underline" style="color: var(--accent);">Shop ↗</a>{/if}
+          </div>
+        </div>
+      {/each}
+    </div>
+  </div>
+
+  <!-- Row 2: Top 10 Kollektionen + Top 3 by Typ -->
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+    <!-- Top 10 Kollektionen -->
+    <div class="rounded-xl p-4" style="background: white; border: 1px solid var(--warm-200);">
+      <h3 class="text-xs font-semibold uppercase tracking-[0.15em] mb-3" style="color: var(--warm-400);">Top 10 Kollektionen</h3>
+      <div class="space-y-2">
+        {#each top10Koll as koll, i}
+          <div class="flex items-center gap-2">
+            <span class="w-5 text-[10px] font-bold text-right tabular-nums" style="color: var(--warm-400);">{i + 1}</span>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center justify-between gap-2">
+                <p class="text-[11px] font-medium truncate" style="color: var(--warm-700);">{koll.name}</p>
+                <p class="text-[11px] font-semibold tabular-nums flex-shrink-0" style="color: var(--warm-800);">{fmtEUR(koll.umsatz)}</p>
+              </div>
+              <div class="w-full h-1 rounded-full mt-0.5 overflow-hidden" style="background: var(--warm-100);">
+                <div class="h-full rounded-full" style="width: {Math.min(koll.anteil * 3, 100)}%; background: {COLORS[i % COLORS.length]};"></div>
+              </div>
+            </div>
+          </div>
+        {/each}
+      </div>
+    </div>
+
+    <!-- Top 3 Kollektionen pro Typ -->
+    <div class="rounded-xl p-4" style="background: white; border: 1px solid var(--warm-200);">
+      <h3 class="text-xs font-semibold uppercase tracking-[0.15em] mb-3" style="color: var(--warm-400);">Top 3 Kollektionen nach Typ</h3>
+      <div class="space-y-3 max-h-80 overflow-y-auto pr-1">
+        {#each top3ByTyp.slice(0, 8) as t}
+          <div>
+            <div class="flex items-center justify-between mb-1">
+              <p class="text-[10px] font-semibold uppercase tracking-wider" style="color: var(--accent);">{t.typ}</p>
+              <p class="text-[9px] tabular-nums" style="color: var(--warm-400);">{fmtEUR(t.totalUmsatz)}</p>
+            </div>
+            {#each t.kolls as koll, ki}
+              <div class="flex items-center justify-between py-0.5 pl-3">
+                <span class="text-[10px] truncate" style="color: var(--warm-600); max-width: 180px;">{ki + 1}. {koll.name}</span>
+                <span class="text-[10px] tabular-nums font-medium" style="color: var(--warm-700);">{fmtEUR(koll.umsatz)}</span>
+              </div>
+            {/each}
+          </div>
+        {/each}
+      </div>
+    </div>
+  </div>
+
+  <!-- Row 3: Top 4 Kolls pro KW (excl. Classics/Basic) -->
+  <div class="rounded-xl p-4" style="background: white; border: 1px solid var(--warm-200);">
+    <h3 class="text-xs font-semibold uppercase tracking-[0.15em] mb-1" style="color: var(--warm-400);">Top 4 Kollektionen pro KW</h3>
+    <p class="text-[9px] mb-3" style="color: var(--warm-400);">ohne Classics & Basic</p>
+    <div class="overflow-x-auto">
+      <div class="flex gap-3" style="min-width: max-content;">
+        {#each kwTopKolls as kwData}
+          <div class="flex-shrink-0 w-36">
+            <p class="text-[10px] font-semibold mb-2 text-center" style="color: var(--warm-500);">KW {kwData.kw}</p>
+            <div class="space-y-1.5">
+              {#each kwData.kolls as koll, ki}
+                <div class="rounded-lg px-2.5 py-1.5" style="background: {koll.color}15; border-left: 3px solid {koll.color};">
+                  <p class="text-[9px] font-medium truncate" style="color: var(--warm-700);" title={koll.name}>{koll.name}</p>
+                  <p class="text-[9px] tabular-nums font-semibold" style="color: {koll.color};">{fmtEUR(koll.umsatz)}</p>
+                </div>
+              {/each}
+            </div>
+          </div>
+        {/each}
+      </div>
+    </div>
+  </div>
+
+  <!-- Row 4: Shop Umsatzverlauf -->
+  <div class="rounded-xl p-4" style="background: white; border: 1px solid var(--warm-200);">
+    <h3 class="text-xs font-semibold uppercase tracking-[0.15em] mb-3" style="color: var(--warm-400);">Umsatzverlauf der Shops (KW)</h3>
+    <div class="overflow-x-auto">
+      <svg width={Math.max(600, shopTrend.kws.length * 70 + 180)} height={280} style="font-family: var(--font-body);">
+        <!-- Grid -->
+        {#each [0, 0.25, 0.5, 0.75, 1] as frac}
+          {@const maxShopKw = Math.max(...shopTrend.data.map(row => Math.max(...row)), 1)}
+          {@const yy = 20 + (1 - frac) * 230}
+          <line x1={60} x2={shopTrend.kws.length * 70 + 60} y1={yy} y2={yy} stroke="var(--warm-100)" stroke-width="1" />
+          <text x={56} y={yy + 4} text-anchor="end" fill="var(--warm-400)" font-size="8">{fmtEUR(maxShopKw * frac)}</text>
+        {/each}
+
+        <!-- KW labels -->
+        {#each shopTrend.kws as kw, ki}
+          <text x={60 + ki * 70 + 35} y={268} text-anchor="middle" fill="var(--warm-500)" font-size="9">KW{kw}</text>
+        {/each}
+
+        <!-- Lines per shop -->
+        {#each shopTrend.topShops as shop, si}
+          {@const maxShopKw = Math.max(...shopTrend.data.map(row => Math.max(...row)), 1)}
+          {@const color = COLORS[si % COLORS.length]}
+          {@const points = shopTrend.data.map((row, ki) => `${60 + ki * 70 + 35},${20 + (1 - row[si] / maxShopKw) * 230}`)}
+          <polyline points={points.join(' ')} fill="none" stroke={color} stroke-width="1.5" opacity="0.7" />
+          {#each shopTrend.data as row, ki}
+            <circle cx={60 + ki * 70 + 35} cy={20 + (1 - row[si] / maxShopKw) * 230} r="2.5" fill={color} opacity="0.8" />
+          {/each}
+        {/each}
+
+        <!-- Legend -->
+        {#each shopTrend.topShops as shop, si}
+          {@const lx = shopTrend.kws.length * 70 + 70}
+          <rect x={lx} y={20 + si * 16} width="8" height="8" rx="2" fill={COLORS[si % COLORS.length]} />
+          <text x={lx + 12} y={20 + si * 16 + 8} fill="var(--warm-600)" font-size="8">{shop}</text>
+        {/each}
+      </svg>
+    </div>
+  </div>
+</div>

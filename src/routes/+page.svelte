@@ -4,6 +4,7 @@
   import BarChart from '$lib/BarChart.svelte';
   import PieChart from '$lib/PieChart.svelte';
   import AreaChart from '$lib/AreaChart.svelte';
+  import Dashboard from '$lib/Dashboard.svelte';
 
   // ─── Types ───
   interface RawRow {
@@ -26,12 +27,12 @@
     subGroups?: GroupNode[];           // optional mid-level (Kollektionen inside Form/Art)
   }
 
-  type TabId = 'kollektion' | 'artikel' | 'form' | 'art' | 'formpfad' | 'preis' | 'kasse' | 'custom' | 'bubble' | 'bar' | 'pie' | 'area';
+  type TabId = 'dashboard' | 'kollektion' | 'artikel' | 'form' | 'art' | 'formpfad' | 'preis' | 'kasse' | 'custom' | 'bubble' | 'bar' | 'pie' | 'area';
 
   // ─── State ───
   let allData: RawRow[] = $state([]);
   let loading = $state(true);
-  let activeTab = $state<TabId>('kollektion');
+  let activeTab = $state<TabId>('dashboard');
 
   // Pre-aggregated data — all derived, no $effect needed
   let preisSubTab = $state<'formpfad' | 'kollektion'>('formpfad');
@@ -395,6 +396,7 @@
   });
 
   const DATA_TABS: { id: TabId; label: string }[] = [
+    { id: 'dashboard', label: 'Dashboard' },
     { id: 'kollektion', label: 'Kollektionen' },
     { id: 'artikel', label: 'Artikel' },
     { id: 'form', label: 'Form' },
@@ -586,7 +588,11 @@
     </div>
 
     <!-- Table / Charts -->
-    {#if activeTab === 'bubble'}
+    {#if activeTab === 'dashboard'}
+      <div class="max-w-6xl mx-auto px-5 pb-10">
+        <Dashboard data={filteredData} />
+      </div>
+    {:else if activeTab === 'bubble'}
       <div class="max-w-6xl mx-auto px-5 pb-10">
         <div class="rounded-2xl p-5" style="background: white; border: 1px solid var(--warm-200); box-shadow: 0 4px 20px rgba(0,0,0,0.03);">
           <BubbleChart data={filteredData} />
