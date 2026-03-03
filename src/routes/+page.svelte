@@ -22,7 +22,7 @@
     subGroups?: GroupNode[];           // optional mid-level (Kollektionen inside Form/Art)
   }
 
-  type TabId = 'kollektion' | 'form' | 'art' | 'formpfad' | 'preis';
+  type TabId = 'kollektion' | 'form' | 'art' | 'formpfad' | 'preis' | 'kasse';
 
   // ─── State ───
   let allData: RawRow[] = $state([]);
@@ -30,10 +30,13 @@
   let activeTab = $state<TabId>('kollektion');
 
   // Pre-aggregated data per tab
-  let tabData = $state<Record<TabId, GroupNode[]>>({ kollektion: [], form: [], art: [], formpfad: [], preis: [] });
+  let tabData = $state<Record<TabId, GroupNode[]>>({ kollektion: [], form: [], art: [], formpfad: [], preis: [], kasse: [] });
   // For Preis tab: two sub-modes
   let preisSubTab = $state<'formpfad' | 'kollektion'>('formpfad');
   let preisData = $state<Record<'formpfad' | 'kollektion', GroupNode[]>>({ formpfad: [], kollektion: [] });
+  // For Kollektion tab: direct articles vs SubKollektion
+  let kollSubMode = $state<'artikel' | 'subkollektion'>('artikel');
+  let kollData = $state<Record<'artikel' | 'subkollektion', GroupNode[]>>({ artikel: [], subkollektion: [] });
   let totalUmsatz = $state(0);
   let totalAnzahl = $state(0);
 
@@ -50,7 +53,11 @@
   let lightboxUrl = $state('');
 
   // ─── Derived ───
-  let currentGroups = $derived(activeTab === 'preis' ? preisData[preisSubTab] : tabData[activeTab]);
+  let currentGroups = $derived(
+    activeTab === 'preis' ? preisData[preisSubTab] :
+    activeTab === 'kollektion' ? kollData[kollSubMode] :
+    tabData[activeTab]
+  );
 
   let filtered = $derived.by(() => {
     let list = currentGroups;
@@ -149,10 +156,12 @@
     totalUmsatz = total;
     totalAnzahl = allData.reduce((s, r) => s + (Number(r.Anzahl) || 0), 0);
 
-    // Tab 1: by Kollektion (flat, no subgroups)
+    // Tab 1: by Kollektion — two modes: direct articles OR SubKollektion → articles
     const byKoll = new Map<string, RawRow[]>();
     for (const r of allData) { const k = r.Kollektion; if (!byKoll.has(k)) byKoll.set(k, []); byKoll.get(k)!.push(r); }
-    tabData.kollektion = Array.from(byKoll.entries()).map(([n, rows]) => buildGroup(n, rows, total));
+    kollData.artikel = Array.from(byKoll.entries()).map(([n, rows]) => buildGroup(n, rows, total));
+    kollData.subkollektion = Array.from(byKoll.entries()).map(([n, rows]) => buildGroup(n, rows, total, ['SubKollektion']));
+    tabData.kollektion = kollData.artikel;
 
     // Tab 2: by Form → Kollektion
     const byForm = new Map<string, RawRow[]>();
@@ -204,6 +213,11 @@
     // Also set tabData.preis to default (will use preisData via currentGroups)
     tabData.preis = preisData.formpfad;
 
+    // Tab 6: by Kasse → Kollektion
+    const byKasse = new Map<string, RawRow[]>();
+    for (const r of allData) { const k = r.Kasse || '(leer)'; if (!byKasse.has(k)) byKasse.set(k, []); byKasse.get(k)!.push(r); }
+    tabData.kasse = Array.from(byKasse.entries()).map(([n, rows]) => buildGroup(n, rows, total, ['Kollektion']));
+
     loading = false;
   });
 
@@ -213,6 +227,7 @@
     { id: 'art', label: 'Typ' },
     { id: 'formpfad', label: 'FormPfad' },
     { id: 'preis', label: 'Preisgruppe' },
+    { id: 'kasse', label: 'Kasse' },
   ];
 </script>
 
@@ -257,6 +272,23 @@
               class="px-3 py-1 text-[11px] font-medium"
               style="background: {preisSubTab === 'kollektion' ? 'var(--accent)' : 'white'}; color: {preisSubTab === 'kollektion' ? 'white' : 'var(--warm-500)'}; border-left: 1px solid var(--warm-200);">
               Kollektion
+            </button>
+          </div>
+        </div>
+      {/if}
+      {#if activeTab === 'kollektion'}
+        <div class="flex items-center gap-2 py-2 border-t" style="border-color: var(--warm-100);">
+          <p class="text-[10px] font-medium" style="color: var(--warm-400);">Aufklappen zeigt:</p>
+          <div class="flex rounded-lg overflow-hidden" style="border: 1px solid var(--warm-200);">
+            <button onclick={() => { kollSubMode = 'artikel'; expandedL1 = new Set(); expandedL2 = new Set(); expandedL3 = new Set(); expandedArticles = new Set(); }}
+              class="px-3 py-1 text-[11px] font-medium"
+              style="background: {kollSubMode === 'artikel' ? 'var(--accent)' : 'white'}; color: {kollSubMode === 'artikel' ? 'white' : 'var(--warm-500)'};">
+              Artikel
+            </button>
+            <button onclick={() => { kollSubMode = 'subkollektion'; expandedL1 = new Set(); expandedL2 = new Set(); expandedL3 = new Set(); expandedArticles = new Set(); }}
+              class="px-3 py-1 text-[11px] font-medium"
+              style="background: {kollSubMode === 'subkollektion' ? 'var(--accent)' : 'white'}; color: {kollSubMode === 'subkollektion' ? 'white' : 'var(--warm-500)'}; border-left: 1px solid var(--warm-200);">
+              SubKollektion
             </button>
           </div>
         </div>
