@@ -140,32 +140,55 @@
     }).join(' ');
   }
 
-  // Treemaps
+  // Treemaps with drill-down
   type TreemapField = 'Kollektion' | 'FormPfad' | 'Artikel';
   let tmField = $state<TreemapField>('Kollektion');
   let tmTop20 = $state(false);
   let tmHideSonstige = $state(false);
-  interface TmNode { label: string; value: number; bildId: string; }
+  interface DrillLevel { label: string; field: string; value: string; }
+  let tmDrill = $state<DrillLevel[]>([]);
+  interface TmNode { label: string; value: number; bildId: string; drillKey: string; }
+  function tmDrillPath(field: TreemapField): string[] {
+    if (field === 'Kollektion') return ['Kollektion', 'FormPfad', 'Artikel', 'Kasse'];
+    if (field === 'FormPfad') return ['FormPfad', 'Kollektion', 'Artikel', 'Kasse'];
+    return ['Artikel', 'Kasse'];
+  }
+  let tmCurrentLevel = $derived(tmDrill.length);
+  let tmPathArr = $derived(tmDrillPath(tmField));
+  let tmCurrentField = $derived(tmPathArr[tmCurrentLevel] || tmPathArr[tmPathArr.length - 1]);
+  let tmCanDrill = $derived(tmCurrentLevel < tmPathArr.length - 1);
   let treemapNodes = $derived.by((): TmNode[] => {
+    let rows = data;
+    for (const d of tmDrill) {
+      rows = rows.filter(r => {
+        if (d.field === 'Artikel') return String(r.BildId) === d.value;
+        return (r as any)[d.field] === d.value;
+      });
+    }
+    const curField = tmCurrentField;
     const m = new Map<string, { value: number; bildId: string }>();
-    for (const r of data) {
+    for (const r of rows) {
       let key: string; let bildId = '';
-      if (tmField === 'Artikel') { const bid = String(r.BildId); if (!bid || bid === '0') continue; key = bid; bildId = bid; }
-      else { key = (r as any)[tmField] || '(leer)'; }
+      if (curField === 'Artikel') { const bid = String(r.BildId); if (!bid || bid === '0') continue; key = bid; bildId = bid; }
+      else if (curField === 'Kasse') { key = r.Kasse || '(leer)'; }
+      else { key = (r as any)[curField] || '(leer)'; }
       if (!m.has(key)) m.set(key, { value: 0, bildId });
       const a = m.get(key)!;
       a.value += (Number(r.EinzelPreis) || 0) * (Number(r.Anzahl) || 0);
       if (!a.bildId && bildId) a.bildId = bildId;
     }
-    let nodes = [...m.entries()].map(([label, a]) => ({ label, value: a.value, bildId: a.bildId })).sort((a, b) => b.value - a.value);
+    let nodes: TmNode[] = [...m.entries()].map(([label, a]) => ({ label, value: a.value, bildId: a.bildId, drillKey: label })).sort((a, b) => b.value - a.value);
     const limit = tmTop20 ? 20 : nodes.length;
     if (nodes.length > limit) {
       const top = nodes.slice(0, limit);
-      if (!tmHideSonstige) { const sv = nodes.slice(limit).reduce((s, n) => s + n.value, 0); if (sv > 0) top.push({ label: 'Sonstige', value: sv, bildId: '' }); }
+      if (!tmHideSonstige) { const sv = nodes.slice(limit).reduce((s, n) => s + n.value, 0); if (sv > 0) top.push({ label: 'Sonstige', value: sv, bildId: '', drillKey: '' }); }
       nodes = top;
     }
     return nodes;
   });
+  function tmClick(node: TmNode) { if (!tmCanDrill || node.label === 'Sonstige') return; tmDrill = [...tmDrill, { label: node.label, field: tmCurrentField, value: node.drillKey }]; }
+  function tmBack(toLevel: number) { tmDrill = tmDrill.slice(0, toLevel); }
+  function tmReset() { tmDrill = []; }
   function layoutTreemap(nodes: TmNode[], w: number, h: number): { x: number; y: number; w: number; h: number; node: TmNode }[] {
     const total = nodes.reduce((s, n) => s + n.value, 0);
     if (total <= 0 || !nodes.length) return [];
@@ -243,7 +266,7 @@
       <h3 class="text-xs font-semibold uppercase tracking-[0.15em]" style="color: var(--warm-400);">Treemap</h3>
       <div class="flex rounded-lg overflow-hidden" style="border: 1px solid var(--warm-200);">
         {#each (["Kollektion", "FormPfad", "Artikel"] as const) as opt, i}
-          <button onclick={() => tmField = opt} class="px-3 py-1 text-[11px] font-medium"
+          <button onclick={() => { tmField = opt; tmDrill = []; }} class="px-3 py-1 text-[11px] font-medium"
             style="background: {tmField === opt ? "var(--accent)" : "white"}; color: {tmField === opt ? "white" : "var(--warm-500)"}; {i > 0 ? "border-left: 1px solid var(--warm-200)" : ""};">
             {opt}
           </button>
@@ -258,6 +281,20 @@
         <span class="text-[11px]" style="color: var(--warm-500);">Sonstige ausblenden</span>
       </label>
     </div>
+    {#if tmDrill.length > 0}
+    <div class="flex items-center gap-1.5 mb-3 flex-wrap">
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <span class="text-[10px] font-medium cursor-pointer hover:underline" style="color: var(--accent);" onclick={() => tmReset()}>{tmField}</span>
+      {#each tmDrill as d, di}
+        <span class="text-[10px]" style="color: var(--warm-400);">›</span>
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <span class="text-[10px] font-medium cursor-pointer hover:underline" style="color: {di < tmDrill.length - 1 ? 'var(--accent)' : 'var(--warm-600)'};" onclick={() => tmBack(di + 1)}>{d.label}</span>
+      {/each}
+      <span class="text-[10px]" style="color: var(--warm-400);">› {tmCurrentField}</span>
+    </div>
+    {/if}
     {#if true}
     {@const tmW = 900}
     {@const tmH = 420}
@@ -269,7 +306,9 @@
           {@const pct = tmTotal > 0 ? (rect.node.value / tmTotal * 100) : 0}
           {@const showLabel = rect.w > 45 && rect.h > 28}
           {@const showImg = tmField === "Artikel" && rect.node.bildId && rect.w > 30 && rect.h > 30}
-          <g>
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <g onclick={() => tmClick(rect.node)} style="cursor: {tmCanDrill && rect.node.label !== 'Sonstige' ? 'pointer' : 'default'};" >
             <rect x={rect.x + 1} y={rect.y + 1} width={Math.max(rect.w - 2, 0)} height={Math.max(rect.h - 2, 0)}
               rx="4" fill={rect.node.label === "Sonstige" ? "var(--warm-200)" : COLORS[i % COLORS.length]}
               opacity={rect.node.label === "Sonstige" ? 0.6 : 0.78} />
