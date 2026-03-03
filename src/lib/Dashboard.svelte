@@ -4,8 +4,8 @@
     Form: string; Kasse: string; Art: string; Nr: string; KW: string; Monat: string;
   }
 
-  let { data = [], compareData = [], currentKW = 'alle', availableKWs = [] as string[], onKWChange = (kw: string) => {} }: {
-    data: RawRow[]; compareData: RawRow[]; currentKW: string; availableKWs: string[]; onKWChange: (kw: string) => void;
+  let { data = [], compareData = [], allData = [], currentKW = 'alle', availableKWs = [] as string[], onKWChange = (kw: string) => {} }: {
+    data: RawRow[]; compareData: RawRow[]; allData: RawRow[]; currentKW: string; availableKWs: string[]; onKWChange: (kw: string) => void;
   } = $props();
 
   function imgUrl(bid: string, sz: number): string {
@@ -114,10 +114,18 @@
     }).sort((a, b) => b.totalUmsatz - a.totalUmsatz).filter(t => t.totalUmsatz > 0);
   });
 
-  // Top 4 Kolls pro KW
+  // Last 30 KWs from allData
+  let last30KWData = $derived.by(() => {
+    const allKWs = [...new Set(allData.map(r => r.KW))].sort((a, b) => Number(a) - Number(b));
+    const last30 = allKWs.slice(-30);
+    const kwSet = new Set(last30);
+    return allData.filter(r => kwSet.has(r.KW));
+  });
+
+  // Top 4 Kolls pro KW (last 30 KWs)
   interface KwTop { kw: string; kolls: { name: string; umsatz: number; color: string }[]; }
   let kwTopKolls = $derived.by((): KwTop[] => {
-    const filtered = data.filter(r => r.Art !== 'Classics' && r.Art !== 'Basic');
+    const filtered = last30KWData.filter(r => r.Art !== 'Classics' && r.Art !== 'Basic');
     const kwMap = new Map<string, Map<string, number>>();
     for (const r of filtered) { const kw = r.KW; if (!kwMap.has(kw)) kwMap.set(kw, new Map()); kwMap.get(kw)!.set(r.Kollektion, (kwMap.get(kw)!.get(r.Kollektion) || 0) + (Number(r.EinzelPreis) || 0) * (Number(r.Anzahl) || 0)); }
     const allTopKolls = new Set<string>();
@@ -129,10 +137,10 @@
     }));
   });
 
-  // Shop Umsatzverlauf
+  // Shop Umsatzverlauf (last 30 KWs)
   let shopTrend = $derived.by(() => {
     const kwShopMap = new Map<string, Map<string, number>>(); const shopTotals = new Map<string, number>();
-    for (const r of data) { const kw = r.KW; const shop = r.Kasse; if (!kwShopMap.has(kw)) kwShopMap.set(kw, new Map()); const sm = kwShopMap.get(kw)!;
+    for (const r of last30KWData) { const kw = r.KW; const shop = r.Kasse; if (!kwShopMap.has(kw)) kwShopMap.set(kw, new Map()); const sm = kwShopMap.get(kw)!;
       const u = (Number(r.EinzelPreis) || 0) * (Number(r.Anzahl) || 0); sm.set(shop, (sm.get(shop) || 0) + u); shopTotals.set(shop, (shopTotals.get(shop) || 0) + u); }
     const topShops = [...shopTotals.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(e => e[0]);
     const kws = [...kwShopMap.keys()].sort((a, b) => Number(a) - Number(b));

@@ -596,7 +596,7 @@
     <!-- Table / Charts -->
     {#if activeTab === 'dashboard'}
       <div class="max-w-6xl mx-auto px-5 pb-10">
-        <Dashboard data={filteredData} compareData={compareData} currentKW={filterKW} {availableKWs}
+        <Dashboard data={filteredData} compareData={compareData} {allData} currentKW={filterKW} {availableKWs}
           onKWChange={(kw) => { filterKW = kw; }} />
       </div>
     {:else if activeTab === 'bubble'}
