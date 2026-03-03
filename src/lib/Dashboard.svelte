@@ -246,7 +246,8 @@
     curList.sort((a, b) => (b as any)[sortKey] - (a as any)[sortKey]);
     curList.forEach((a, i) => a.curRank = i + 1);
     const compSortKey = matrixSort === 'umsatz' ? 'compUmsatz' : 'compAnzahl';
-    const compSorted = [...curList].sort((a, b) => (b as any)[compSortKey] - (a as any)[compSortKey]);
+    const withCompData = curList.filter(a => (a as any)[compSortKey] > 0);
+    const compSorted = [...withCompData].sort((a, b) => (b as any)[compSortKey] - (a as any)[compSortKey]);
     compSorted.forEach((a, i) => a.compRank = i + 1);
     return curList.slice(0, 30);
   });
@@ -391,7 +392,7 @@
           <div class="flex items-center gap-2">
             <span class="w-5 text-[10px] font-bold text-right tabular-nums" style="color: var(--warm-400);">{i + 1}</span>
             {#if koll.rankChange !== 0}
-              <span class="text-[9px] font-semibold w-6" style="color: {koll.rankChange > 0 ? '#6b8e5a' : '#c06050'};">{koll.rankChange > 0 ? '&#9650;' + koll.rankChange : '&#9660;' + Math.abs(koll.rankChange)}</span>
+              <span class="text-[9px] font-semibold w-6" style="color: {koll.rankChange > 0 ? '#6b8e5a' : '#c06050'};">{koll.rankChange > 0 ? '▲' + koll.rankChange : '▼' + Math.abs(koll.rankChange)}</span>
             {:else}<span class="w-6 text-[9px] text-center" style="color: var(--warm-300);">=</span>{/if}
             <div class="flex-1 min-w-0">
               <div class="flex items-center justify-between gap-2">
@@ -420,7 +421,7 @@
               <div class="flex items-center justify-between py-0.5 pl-3">
                 <div class="flex items-center gap-1.5">
                   <span class="text-[10px] truncate" style="color: var(--warm-600); max-width: 150px;">{ki + 1}. {koll.name}</span>
-                  {#if koll.rankChange !== 0}<span class="text-[8px] font-semibold" style="color: {koll.rankChange > 0 ? '#6b8e5a' : '#c06050'};">{koll.rankChange > 0 ? '&#9650;' + koll.rankChange : '&#9660;' + Math.abs(koll.rankChange)}</span>{/if}
+                  {#if koll.rankChange !== 0}<span class="text-[8px] font-semibold" style="color: {koll.rankChange > 0 ? '#6b8e5a' : '#c06050'};">{koll.rankChange > 0 ? '▲' + koll.rankChange : '▼' + Math.abs(koll.rankChange)}</span>{/if}
                 </div>
                 <div class="text-right">
                   <span class="text-[10px] tabular-nums font-medium" style="color: var(--warm-700);">{fmtEUR(koll.umsatz)}</span>
@@ -520,7 +521,7 @@
               <td class="px-2 py-1 text-right tabular-nums font-semibold" style="color: {compVal > 0 ? deltaColor(curVal, compVal) : 'var(--warm-300)'};">{compVal > 0 ? fmtDelta(curVal, compVal) : ''}</td>
               <td class="px-2 py-1 text-center">
                 {#if art.compRank > 0 && art.compRank !== art.curRank}
-                  <span class="text-[9px] font-semibold" style="color: {art.compRank > art.curRank ? '#6b8e5a' : '#c06050'};">{art.compRank > art.curRank ? '&#9650;' : '&#9660;'}{Math.abs(art.compRank - art.curRank)}</span>
+                  <span class="text-[9px] font-semibold" style="color: {art.compRank > art.curRank ? '#6b8e5a' : '#c06050'};">{art.compRank > art.curRank ? '▲' : '▼'}{Math.abs(art.compRank - art.curRank)}</span>
                 {:else}<span style="color: var(--warm-300);">=</span>{/if}
               </td>
               <td class="px-2 py-1 text-right">{#if art.nr}<a href="https://www.konplott.com/go/{art.nr}" target="_blank" rel="noopener" class="underline" style="color: var(--accent);">&#8599;</a>{/if}</td>
