@@ -272,9 +272,33 @@
 
   // Artikel-Matrix — uses global timeUnit, last 10 periods
   let mxSortBy = $state<'umsatz' | 'anzahl'>('umsatz');
+  let mxSelectedArt = $state<string | null>(null);
 
   interface MxCol { label: string; rows: MxArt[]; }
   interface MxArt { bildId: string; nr: string; koll: string; formPfad: string; umsatz: number; anzahl: number; }
+
+  // Kassen breakdown for selected article
+  interface MxKasseRow { kasse: string; values: number[]; total: number; }
+  let mxKassenData = $derived.by((): { labels: string[]; rows: MxKasseRow[] } => {
+    if (!mxSelectedArt) return { labels: [], rows: [] };
+    const last10 = timeUnit === 'jahr' ? ['2026'] : periods.slice(-10).reverse();
+    const labels = last10.map(p => mxPeriodLabel(p));
+    const kasseMap = new Map<string, number[]>();
+    last10.forEach((p, pi) => {
+      const filtered = timeUnit === 'jahr' ? allData : allData.filter(r => periodKey(r) === p);
+      for (const r of filtered) {
+        if (String(r.BildId) !== mxSelectedArt) continue;
+        const k = r.Kasse; const an = Number(r.Anzahl) || 0;
+        const val = mxSortBy === 'umsatz' ? (Number(r.EinzelPreis) || 0) * an : an;
+        if (!kasseMap.has(k)) kasseMap.set(k, new Array(last10.length).fill(0));
+        kasseMap.get(k)![pi] += val;
+      }
+    });
+    const rows = [...kasseMap.entries()].map(([kasse, values]) => ({
+      kasse, values, total: values.reduce((s, v) => s + v, 0)
+    })).sort((a, b) => b.total - a.total);
+    return { labels, rows };
+  });
 
   function mxPeriodLabel(p: string): string {
     if (timeUnit === 'tag') return p.slice(5);
@@ -611,8 +635,10 @@
             </div>
             <div class="space-y-2">
               {#each col.rows as art, ri}
-                <div class="rounded-lg p-1.5" style="border: 1px solid var(--warm-100); background: {ri < 3 ? 'var(--warm-50)' : 'white'};">
-                  <div class="flex items-start gap-1.5">
+                <!-- svelte-ignore a11y_click_events_have_key_events --><!-- svelte-ignore a11y_no_static_element_interactions -->
+                <div class="rounded-lg p-1.5 cursor-pointer transition-all" onclick={() => mxSelectedArt = mxSelectedArt === art.bildId ? null : art.bildId}
+                  style="border: 1px solid {mxSelectedArt === art.bildId ? 'var(--accent)' : 'var(--warm-100)'}; background: {mxSelectedArt === art.bildId ? '#faf5ed' : ri < 3 ? 'var(--warm-50)' : 'white'}; {mxSelectedArt === art.bildId ? 'box-shadow: 0 0 0 2px var(--accent)' : ''};"
+                >                  <div class="flex items-start gap-1.5">
                     <div class="relative flex-shrink-0">
                       <img src={imgUrl(art.bildId, 80)} alt="" class="w-10 h-10 rounded object-cover" loading="lazy" />
                       <div class="absolute -top-1 -left-1 w-4 h-4 rounded-full flex items-center justify-center text-[7px] font-bold" style="background: {ri < 3 ? 'var(--accent)' : 'var(--warm-300)'}; color: white;">{ri + 1}</div>
@@ -635,5 +661,38 @@
         {/each}
       </div>
     </div>
+    <!-- Kassen breakdown for selected article -->
+    {#if mxSelectedArt && mxKassenData.rows.length > 0}
+      <div class="mt-4 rounded-lg overflow-hidden" style="border: 1px solid var(--accent); background: #faf5ed;">
+        <div class="flex items-center gap-2 px-3 py-2" style="background: var(--accent);">
+          <img src={imgUrl(mxSelectedArt, 40)} alt="" class="w-6 h-6 rounded object-cover" />
+          <span class="text-[10px] font-bold" style="color: white;">Kassen-Aufschlüsselung ({mxSortBy === 'umsatz' ? 'Umsatz' : 'Anzahl'})</span>
+          <!-- svelte-ignore a11y_click_events_have_key_events --><!-- svelte-ignore a11y_no_static_element_interactions -->
+          <span class="ml-auto text-[10px] cursor-pointer px-2 py-0.5 rounded" style="color: white; background: rgba(255,255,255,0.2);" onclick={() => mxSelectedArt = null}>&#10005;</span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-[9px]" style="border-collapse: collapse;">
+            <thead>
+              <tr style="border-bottom: 1.5px solid var(--warm-200); background: var(--warm-50);">
+                <th class="px-2 py-1.5 text-left font-semibold sticky left-0" style="color: var(--warm-500); background: var(--warm-50); min-width: 100px;">Kasse</th>
+                {#each mxKassenData.labels as label}
+                  <th class="px-2 py-1.5 text-right font-semibold" style="color: var(--warm-500); min-width: 65px;">{label}</th>
+                {/each}
+              </tr>
+            </thead>
+            <tbody>
+              {#each mxKassenData.rows as row}
+                <tr style="border-bottom: 1px solid var(--warm-100);">
+                  <td class="px-2 py-1 font-medium sticky left-0" style="color: var(--warm-700); background: #faf5ed;">{row.kasse}</td>
+                  {#each row.values as val}
+                    <td class="px-2 py-1 text-right tabular-nums" style="color: {val > 0 ? 'var(--warm-800)' : 'var(--warm-300)'};">{val > 0 ? (mxSortBy === 'umsatz' ? fmtEUR(val) : fmtNum(val)) : '–'}</td>
+                  {/each}
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {/if}
   </div>
 </div>
