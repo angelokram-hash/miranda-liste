@@ -23,7 +23,7 @@
     subGroups?: GroupNode[];           // optional mid-level (Kollektionen inside Form/Art)
   }
 
-  type TabId = 'kollektion' | 'form' | 'art' | 'formpfad' | 'preis' | 'kasse' | 'bubble';
+  type TabId = 'kollektion' | 'form' | 'art' | 'formpfad' | 'preis' | 'kasse' | 'bubble' | 'custom';
 
   // ─── State ───
   let allData: RawRow[] = $state([]);
@@ -31,13 +31,28 @@
   let activeTab = $state<TabId>('kollektion');
 
   // Pre-aggregated data per tab
-  let tabData = $state<Record<TabId, GroupNode[]>>({ kollektion: [], form: [], art: [], formpfad: [], preis: [], kasse: [], bubble: [] });
+  let tabData = $state<Record<TabId, GroupNode[]>>({ kollektion: [], form: [], art: [], formpfad: [], preis: [], kasse: [], bubble: [], custom: [] });
   // For Preis tab: two sub-modes
   let preisSubTab = $state<'formpfad' | 'kollektion'>('formpfad');
   let preisData = $state<Record<'formpfad' | 'kollektion', GroupNode[]>>({ formpfad: [], kollektion: [] });
   // For Kollektion tab: direct articles vs SubKollektion
   let kollSubMode = $state<'artikel' | 'subkollektion'>('artikel');
   let kollData = $state<Record<'artikel' | 'subkollektion', GroupNode[]>>({ artikel: [], subkollektion: [] });
+  // For Custom tab: 4 selectable levels
+  type DimOption = 'Kollektion' | 'FormPfad' | 'Kasse' | 'SubKollektion' | 'Form' | 'Preisgruppe' | '';
+  const DIM_OPTIONS: { value: DimOption; label: string }[] = [
+    { value: '', label: '— keine —' },
+    { value: 'Kollektion', label: 'Kollektion' },
+    { value: 'FormPfad', label: 'FormPfad' },
+    { value: 'Kasse', label: 'Kasse' },
+    { value: 'SubKollektion', label: 'SubKollektion' },
+    { value: 'Form', label: 'Form' },
+    { value: 'Preisgruppe', label: 'Preisgruppe' },
+  ];
+  let customDim1 = $state<DimOption>('Kollektion');
+  let customDim2 = $state<DimOption>('Form');
+  let customDim3 = $state<DimOption>('');
+  let customDim4 = $state<DimOption>('');
   let totalUmsatz = $state(0);
   let totalAnzahl = $state(0);
 
@@ -54,9 +69,30 @@
   let lightboxUrl = $state('');
 
   // ─── Derived ───
+  // Custom tab: build dynamically from selected dimensions
+  let customGroups = $derived.by(() => {
+    if (activeTab !== 'custom' || !allData.length || !customDim1) return [];
+    const dims = [customDim1, customDim2, customDim3, customDim4].filter(d => d !== '') as string[];
+    if (dims.length === 0) return [];
+    const firstField = dims[0];
+    const restFields = dims.slice(1);
+    let total = 0;
+    for (const r of allData) total += (Number(r.EinzelPreis) || 0) * (Number(r.Anzahl) || 0);
+    const byFirst = new Map<string, RawRow[]>();
+    for (const r of allData) {
+      const k = (r as any)[firstField] || '(leer)';
+      if (!byFirst.has(k)) byFirst.set(k, []);
+      byFirst.get(k)!.push(r);
+    }
+    return Array.from(byFirst.entries())
+      .map(([n, rows]) => buildGroup(n, rows, total, restFields.length > 0 ? restFields : undefined))
+      .sort((a, b) => b.umsatz - a.umsatz);
+  });
+
   let currentGroups = $derived(
     activeTab === 'preis' ? preisData[preisSubTab] :
     activeTab === 'kollektion' ? kollData[kollSubMode] :
+    activeTab === 'custom' ? customGroups :
     tabData[activeTab]
   );
 
@@ -148,9 +184,23 @@
   }
 
   // ─── Init ───
+  function getPreisgruppe(ep: number): string {
+    if (ep < 20) return '0 – 20 €';
+    if (ep < 50) return '20 – 50 €';
+    if (ep < 120) return '50 – 120 €';
+    if (ep < 250) return '120 – 250 €';
+    return 'über 250 €';
+  }
+
   onMount(async () => {
     const res = await fetch('/data.json');
     allData = await res.json();
+
+    // Add computed fields to each row for uniform buildGroup access
+    for (const r of allData) {
+      (r as any).FormPfad = ((r.Form || '').trim().split(/\s+/)[0]) || '(leer)';
+      (r as any).Preisgruppe = getPreisgruppe(Number(r.EinzelPreis) || 0);
+    }
 
     let total = 0;
     for (const r of allData) total += (Number(r.EinzelPreis) || 0) * (Number(r.Anzahl) || 0);
@@ -174,30 +224,21 @@
     for (const r of allData) { const k = r.Art || '(leer)'; if (!byArt.has(k)) byArt.set(k, []); byArt.get(k)!.push(r); }
     tabData.art = Array.from(byArt.entries()).map(([n, rows]) => buildGroup(n, rows, total, ['Kollektion']));
 
-    // Tab 4: by FormPfad (first word of Form) → Form → Kollektion
+    // Tab 4: by FormPfad → Form → Kollektion
     const byFormPfad = new Map<string, RawRow[]>();
     for (const r of allData) {
-      const form = (r.Form || '').trim();
-      const pfad = form.split(/\s+/)[0] || '(leer)';
+      const pfad = (r as any).FormPfad;
       if (!byFormPfad.has(pfad)) byFormPfad.set(pfad, []);
       byFormPfad.get(pfad)!.push(r);
     }
     tabData.formpfad = Array.from(byFormPfad.entries()).map(([n, rows]) => buildGroup(n, rows, total, ['Form', 'Kollektion']));
 
     // Tab 5: by Preisgruppe → FormPfad OR Kollektion
-    const preisRanges: [string, number, number][] = [
-      ['0 – 20 €', 0, 20], ['20 – 50 €', 20, 50], ['50 – 120 €', 50, 120],
-      ['120 – 250 €', 120, 250], ['über 250 €', 250, Infinity],
-    ];
-    function getPreisgruppe(ep: number): string {
-      for (const [label, lo, hi] of preisRanges) { if (ep >= lo && ep < hi) return label; }
-      return 'über 250 €';
-    }
-    // Build both variants for preis tab
+    const preisRanges = ['0 – 20 €', '20 – 50 €', '50 – 120 €', '120 – 250 €', 'über 250 €'];
     const byPreisFP = new Map<string, RawRow[]>();
     const byPreisKoll = new Map<string, RawRow[]>();
     for (const r of allData) {
-      const pg = getPreisgruppe(Number(r.EinzelPreis) || 0);
+      const pg = (r as any).Preisgruppe;
       if (!byPreisFP.has(pg)) byPreisFP.set(pg, []);
       byPreisFP.get(pg)!.push(r);
       if (!byPreisKoll.has(pg)) byPreisKoll.set(pg, []);
@@ -230,6 +271,7 @@
     { id: 'preis', label: 'Preisgruppe' },
     { id: 'kasse', label: 'Kasse' },
     { id: 'bubble', label: 'Bubble Diagram' },
+    { id: 'custom', label: 'Individuell' },
   ];
 </script>
 
@@ -293,6 +335,43 @@
               SubKollektion
             </button>
           </div>
+        </div>
+      {/if}
+      {#if activeTab === 'custom'}
+        <div class="flex flex-wrap items-center gap-3 py-2 border-t" style="border-color: var(--warm-100);">
+          {#each [
+            { label: 'Ebene 1', idx: 0 },
+            { label: 'Ebene 2', idx: 1 },
+            { label: 'Ebene 3', idx: 2 },
+            { label: 'Ebene 4', idx: 3 },
+          ] as lvl}
+            {@const vals = [customDim1, customDim2, customDim3, customDim4]}
+            {@const cur = vals[lvl.idx]}
+            {@const prevEmpty = lvl.idx > 0 && vals[lvl.idx - 1] === ''}
+            <div class="flex items-center gap-1.5">
+              <span class="text-[10px] font-semibold" style="color: var(--warm-400);">{lvl.label}:</span>
+              <select
+                value={cur}
+                onchange={(e) => {
+                  const v = (e.currentTarget as HTMLSelectElement).value as DimOption;
+                  if (lvl.idx === 0) customDim1 = v;
+                  else if (lvl.idx === 1) customDim2 = v;
+                  else if (lvl.idx === 2) customDim3 = v;
+                  else customDim4 = v;
+                  // Clear deeper levels if set to empty
+                  if (v === '') { if (lvl.idx <= 1) customDim2 = ''; if (lvl.idx <= 2) customDim3 = ''; customDim4 = ''; }
+                  expandedL1 = new Set(); expandedL2 = new Set(); expandedL3 = new Set(); expandedArticles = new Set();
+                }}
+                class="text-[11px] py-1 px-2 rounded-lg outline-none"
+                style="border: 1px solid var(--warm-200); font-family: var(--font-body); color: var(--warm-700); background: {prevEmpty ? 'var(--warm-50)' : 'white'};"
+                disabled={prevEmpty}>
+                {#if lvl.idx > 0}<option value="">— keine —</option>{/if}
+                {#each DIM_OPTIONS.filter(o => o.value !== '') as opt}
+                  <option value={opt.value}>{opt.label}</option>
+                {/each}
+              </select>
+            </div>
+          {/each}
         </div>
       {/if}
     </div>
