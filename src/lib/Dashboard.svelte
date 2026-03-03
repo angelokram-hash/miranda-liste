@@ -24,6 +24,27 @@
 
   const COLORS = ['#b07c3e','#6b8e5a','#5a7ea8','#c06050','#8a6ab0','#c09050','#4a8a8a','#b05a80','#7a7a4a','#508ab0','#a06a40','#6a9a6a'];
 
+  function rankBadgeColor(curRank: number, compRank: number): string {
+    if (compRank <= 0) return 'var(--accent)';
+    const diff = compRank - curRank; // positive = improved
+    if (diff === 0) return 'var(--accent)';
+    if (diff > 0) {
+      // Improved: green, more intense with bigger jump
+      const intensity = Math.min(diff / 10, 1);
+      const r = Math.round(60 - intensity * 30);
+      const g = Math.round(130 + intensity * 50);
+      const b = Math.round(70 - intensity * 30);
+      return 'rgb(' + r + ',' + g + ',' + b + ')';
+    } else {
+      // Declined: red, more intense with bigger drop
+      const intensity = Math.min(Math.abs(diff) / 10, 1);
+      const r = Math.round(190 + intensity * 40);
+      const g = Math.round(90 - intensity * 50);
+      const b = Math.round(70 - intensity * 30);
+      return 'rgb(' + r + ',' + g + ',' + b + ')';
+    }
+  }
+
   // KW Navigation
   let kwIdx = $derived(availableKWs.indexOf(currentKW));
   let compKWLabel = $derived(kwIdx > 0 ? 'KW ' + availableKWs[kwIdx - 1] : '');
@@ -40,7 +61,7 @@
   let compAvgPreis = $derived(compAnzahl > 0 ? compUmsatz / compAnzahl : 0);
 
   // Top Artikel
-  interface TopArt { bildId: string; nr: string; koll: string; umsatz: number; anzahl: number; topShops: { name: string; anzahl: number }[]; compUmsatz: number; compAnzahl: number; }
+  interface TopArt { bildId: string; nr: string; koll: string; umsatz: number; anzahl: number; topShops: { name: string; anzahl: number }[]; compUmsatz: number; compAnzahl: number; compRank: number; }
   let artShowAll = $state(false);
   let topArticles = $derived.by((): TopArt[] => {
     const m = new Map<string, { nr: string; koll: string; umsatz: number; anzahl: number; kassen: Map<string, number> }>();
@@ -62,8 +83,14 @@
       const comp = cm.get(bildId);
       return { bildId, nr: a.nr, koll: a.koll, umsatz: a.umsatz, anzahl: a.anzahl,
         topShops: [...a.kassen.entries()].sort((x, y) => y[1] - x[1]).slice(0, 3).map(([name, anzahl]) => ({ name, anzahl })),
-        compUmsatz: comp?.umsatz || 0, compAnzahl: comp?.anzahl || 0 };
-    }).sort((a, b) => b.umsatz - a.umsatz).slice(0, 30);
+        compUmsatz: comp?.umsatz || 0, compAnzahl: comp?.anzahl || 0, compRank: 0 };
+    }).sort((a, b) => b.umsatz - a.umsatz).slice(0, 30).map((art, i) => {
+      // Compute compare rank: position in compare period sorted by umsatz
+      const compAll = [...cm.entries()].sort((a, b) => b[1].umsatz - a[1].umsatz).map(e => e[0]);
+      const ci = compAll.indexOf(art.bildId);
+      art.compRank = ci >= 0 ? ci + 1 : 0;
+      return art;
+    });
   });
 
   // Top 10 Kollektionen
@@ -291,11 +318,13 @@
       <div class="flex flex-wrap gap-3 content-start">
         {#each (artShowAll ? topArticles : topArticles.slice(0, 10)) as art, i}
           <div class="flex-shrink-0 w-24">
-            <div class="relative">
-              <div class="w-24 h-24 rounded-xl overflow-hidden shadow-sm" style="border: 1.5px solid var(--warm-200);">
+            <div class="relative pt-2 pl-2">
+              <div class="w-[88px] h-[88px] rounded-xl overflow-hidden shadow-sm" style="border: 1.5px solid var(--warm-200);">
                 <img src={imgUrl(art.bildId, 200)} alt="" class="w-full h-full object-cover" loading="lazy" onerror={(e) => { (e.currentTarget as HTMLImageElement).style.display='none'; }} />
               </div>
-              <div class="absolute -top-1.5 -left-1.5 w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold" style="background: var(--accent); color: white;">{i + 1}</div>
+              <div class="absolute top-0 left-0 min-w-5 h-5 px-1 rounded-full flex items-center justify-center text-[8px] font-bold" style="background: {rankBadgeColor(i + 1, art.compRank)}; color: white;">
+                {i + 1}{#if art.compRank > 0}<span class="font-normal opacity-80">({art.compRank})</span>{/if}
+              </div>
             </div>
             <div class="mt-1.5 text-center">
               <p class="text-[10px] font-semibold tabular-nums" style="color: var(--warm-700);">{fmtEUR(art.umsatz)}</p>
