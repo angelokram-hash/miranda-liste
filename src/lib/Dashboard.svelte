@@ -150,16 +150,18 @@
   });
 
   // Top 4 Kolls pro KW (last 30 KWs)
+  let kwTypFilter = $state<string>('alle');
+  let kwAvailableTypes = $derived([...new Set(last30KWData.map(r => r.Art).filter(Boolean))].sort());
   interface KwTop { kw: string; kolls: { name: string; umsatz: number; color: string }[]; }
   let kwTopKolls = $derived.by((): KwTop[] => {
-    const filtered = last30KWData.filter(r => r.Art !== 'Classics' && r.Art !== 'Basic');
+    const filtered = kwTypFilter === 'alle' ? last30KWData : last30KWData.filter(r => r.Art === kwTypFilter);
     const kwMap = new Map<string, Map<string, number>>();
     for (const r of filtered) { const kw = r.KW; if (!kwMap.has(kw)) kwMap.set(kw, new Map()); kwMap.get(kw)!.set(r.Kollektion, (kwMap.get(kw)!.get(r.Kollektion) || 0) + (Number(r.EinzelPreis) || 0) * (Number(r.Anzahl) || 0)); }
     const allTopKolls = new Set<string>();
     for (const km of kwMap.values()) { for (const [name] of [...km.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4)) allTopKolls.add(name); }
     const kollColorMap = new Map<string, string>(); let ci = 0;
     for (const k of allTopKolls) { kollColorMap.set(k, COLORS[ci % COLORS.length]); ci++; }
-    return [...kwMap.entries()].sort((a, b) => Number(a[0]) - Number(b[0])).map(([kw, km]) => ({
+    return [...kwMap.entries()].sort((a, b) => Number(b[0]) - Number(a[0])).map(([kw, km]) => ({
       kw, kolls: [...km.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([name, umsatz]) => ({ name, umsatz, color: kollColorMap.get(name) || '#999' })),
     }));
   });
@@ -604,8 +606,16 @@
 
   <!-- Top 4 Kolls pro KW -->
   <div class="rounded-xl p-4" style="background: white; border: 1px solid var(--warm-200);">
-    <h3 class="text-xs font-semibold uppercase tracking-[0.15em] mb-1" style="color: var(--warm-400);">Top 4 Kollektionen pro KW</h3>
-    <p class="text-[9px] mb-3" style="color: var(--warm-400);">ohne Classics &amp; Basic</p>
+    <div class="flex flex-wrap items-center gap-4 mb-3">
+      <h3 class="text-xs font-semibold uppercase tracking-[0.15em]" style="color: var(--warm-400);">Top 4 Kollektionen pro KW</h3>
+      <div class="flex items-center gap-2">
+        <span class="text-[9px] font-medium" style="color: var(--warm-400);">Typ:</span>
+        <select bind:value={kwTypFilter} class="text-[10px] py-0.5 px-1.5 rounded-md outline-none" style="border: 1px solid var(--warm-200); background: white; color: var(--warm-700); max-width: 160px;">
+          <option value="alle">Alle</option>
+          {#each kwAvailableTypes as typ}<option value={typ}>{typ}</option>{/each}
+        </select>
+      </div>
+    </div>
     <div class="overflow-x-auto"><div class="flex gap-3" style="min-width: max-content;">
       {#each kwTopKolls as kwData}
         <div class="flex-shrink-0 w-36">
