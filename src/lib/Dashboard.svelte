@@ -303,29 +303,6 @@
 </script>
 
 <div class="space-y-6">
-  <!-- KPIs -->
-  <div class="rounded-xl p-4" style="background: white; border: 1px solid var(--warm-200);">
-    <div class="text-center mb-3">
-      <p class="text-sm font-bold" style="color: var(--warm-800); font-family: var(--font-heading);">{currentLabel}</p>
-      {#if compareLabel}<p class="text-[9px]" style="color: var(--warm-400);">vs {compareLabel}</p>{/if}
-    </div>
-    {#if true}
-    {@const kpis = [{label:'Umsatz',cur:totalUmsatz,comp:compUmsatz,fmt:fmtEUR},{label:'Stück',cur:totalAnzahl,comp:compAnzahl,fmt:fmtNum},{label:'⌀ Preis',cur:avgPreis,comp:compAvgPreis,fmt:fmtEUR}]}
-    <div class="grid grid-cols-3 gap-4">
-      {#each kpis as kpi}
-        <div class="text-center">
-          <p class="text-[9px] font-semibold uppercase tracking-[0.12em] mb-1" style="color: var(--warm-400);">{kpi.label}</p>
-          <p class="text-lg font-bold tabular-nums" style="color: var(--warm-800);">{kpi.fmt(kpi.cur)}</p>
-          {#if kpi.comp > 0}
-            <p class="text-[9px] tabular-nums" style="color: var(--warm-400);">Vgl: {kpi.fmt(kpi.comp)}</p>
-            <p class="text-[10px] font-semibold tabular-nums" style="color: {deltaColor(kpi.cur, kpi.comp)};">{fmtDelta(kpi.cur, kpi.comp)}</p>
-          {/if}
-        </div>
-      {/each}
-    </div>
-    {/if}
-  </div>
-
   <!-- Top Artikel -->
   <div class="rounded-xl p-4" style="background: white; border: 1px solid var(--warm-200);">
     <div class="flex items-center justify-between mb-3">
