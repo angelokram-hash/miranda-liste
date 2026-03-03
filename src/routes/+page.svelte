@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import BubbleChart from '$lib/BubbleChart.svelte';
+  import BarChart from '$lib/BarChart.svelte';
 
   // ─── Types ───
   interface RawRow {
@@ -23,7 +24,7 @@
     subGroups?: GroupNode[];           // optional mid-level (Kollektionen inside Form/Art)
   }
 
-  type TabId = 'kollektion' | 'form' | 'art' | 'formpfad' | 'preis' | 'kasse' | 'bubble' | 'custom';
+  type TabId = 'kollektion' | 'form' | 'art' | 'formpfad' | 'preis' | 'kasse' | 'custom' | 'bubble' | 'bar';
 
   // ─── State ───
   let allData: RawRow[] = $state([]);
@@ -352,15 +353,18 @@
     loading = false;
   });
 
-  const TABS: { id: TabId; label: string }[] = [
+  const DATA_TABS: { id: TabId; label: string }[] = [
     { id: 'kollektion', label: 'Kollektionen' },
     { id: 'form', label: 'Form' },
     { id: 'art', label: 'Typ' },
     { id: 'formpfad', label: 'FormPfad' },
     { id: 'preis', label: 'Preisgruppe' },
     { id: 'kasse', label: 'Kasse' },
-    { id: 'bubble', label: 'Bubble Diagram' },
     { id: 'custom', label: 'Individuell' },
+  ];
+  const CHART_TABS: { id: TabId; label: string }[] = [
+    { id: 'bar', label: 'Säulendiagramm' },
+    { id: 'bubble', label: 'Bubble Diagram' },
   ];
 </script>
 
@@ -423,8 +427,16 @@
         {/if}
       </div>
       <!-- Tabs -->
-      <div class="flex gap-0 -mb-px overflow-x-auto">
-        {#each TABS as tab}
+      <div class="flex gap-0 -mb-px overflow-x-auto items-center">
+        {#each DATA_TABS as tab}
+          <button onclick={() => switchTab(tab.id)}
+            class="px-4 py-2.5 text-xs font-medium transition-all border-b-2 whitespace-nowrap"
+            style="color: {activeTab === tab.id ? 'var(--accent)' : 'var(--warm-400)'}; border-color: {activeTab === tab.id ? 'var(--accent)' : 'transparent'}; font-family: var(--font-body);">
+            {tab.label}
+          </button>
+        {/each}
+        <span class="px-2 text-sm self-center" style="color: var(--warm-300);">/</span>
+        {#each CHART_TABS as tab}
           <button onclick={() => switchTab(tab.id)}
             class="px-4 py-2.5 text-xs font-medium transition-all border-b-2 whitespace-nowrap"
             style="color: {activeTab === tab.id ? 'var(--accent)' : 'var(--warm-400)'}; border-color: {activeTab === tab.id ? 'var(--accent)' : 'transparent'}; font-family: var(--font-body);">
@@ -529,11 +541,17 @@
       </div>
     </div>
 
-    <!-- Table / Bubble -->
+    <!-- Table / Charts -->
     {#if activeTab === 'bubble'}
       <div class="max-w-6xl mx-auto px-5 pb-10">
         <div class="rounded-2xl p-5" style="background: white; border: 1px solid var(--warm-200); box-shadow: 0 4px 20px rgba(0,0,0,0.03);">
           <BubbleChart data={filteredData} />
+        </div>
+      </div>
+    {:else if activeTab === 'bar'}
+      <div class="max-w-6xl mx-auto px-5 pb-10">
+        <div class="rounded-2xl p-5" style="background: white; border: 1px solid var(--warm-200); box-shadow: 0 4px 20px rgba(0,0,0,0.03);">
+          <BarChart data={filteredData} />
         </div>
       </div>
     {:else}
