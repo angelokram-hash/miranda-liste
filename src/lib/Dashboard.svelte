@@ -14,20 +14,25 @@
 
   const COLORS = ['#b07c3e','#6b8e5a','#5a7ea8','#c06050','#8a6ab0','#c09050','#4a8a8a','#b05a80','#7a7a4a','#508ab0','#a06a40','#6a9a6a'];
 
-  // ── Top 10 Artikel ──
-  interface TopArt { bildId: string; nr: string; umsatz: number; anzahl: number; }
-  let top10Articles = $derived.by((): TopArt[] => {
-    const m = new Map<string, { nr: string; umsatz: number; anzahl: number }>();
+  // ── Top Artikel ──
+  interface TopArt { bildId: string; nr: string; umsatz: number; anzahl: number; topShops: { name: string; anzahl: number }[]; }
+  let artShowAll = $state(false);
+  let topArticles = $derived.by((): TopArt[] => {
+    const m = new Map<string, { nr: string; umsatz: number; anzahl: number; kassen: Map<string, number> }>();
     for (const r of data) {
       const bid = String(r.BildId);
       if (!bid || bid === '0') continue;
-      if (!m.has(bid)) m.set(bid, { nr: String(r.Nr || ''), umsatz: 0, anzahl: 0 });
+      if (!m.has(bid)) m.set(bid, { nr: String(r.Nr || ''), umsatz: 0, anzahl: 0, kassen: new Map() });
       const a = m.get(bid)!;
       const an = Number(r.Anzahl) || 0;
       a.umsatz += (Number(r.EinzelPreis) || 0) * an;
       a.anzahl += an;
+      a.kassen.set(r.Kasse, (a.kassen.get(r.Kasse) || 0) + an);
     }
-    return [...m.entries()].map(([bildId, a]) => ({ bildId, ...a })).sort((a, b) => b.umsatz - a.umsatz).slice(0, 10);
+    return [...m.entries()].map(([bildId, a]) => ({
+      bildId, nr: a.nr, umsatz: a.umsatz, anzahl: a.anzahl,
+      topShops: [...a.kassen.entries()].sort((x, y) => y[1] - x[1]).slice(0, 3).map(([name, anzahl]) => ({ name, anzahl })),
+    })).sort((a, b) => b.umsatz - a.umsatz).slice(0, 30);
   });
 
   // ── Top 10 Kollektionen ──
@@ -137,27 +142,39 @@
 </script>
 
 <div class="space-y-6">
-  <!-- Row 1: Top 10 Artikel -->
-  <div>
-    <h3 class="text-xs font-semibold uppercase tracking-[0.15em] mb-3" style="color: var(--warm-400); font-family: var(--font-body);">Top 10 Artikel</h3>
-    <div class="flex gap-3 overflow-x-auto pb-2">
-      {#each top10Articles as art, i}
-        <div class="flex-shrink-0 w-24">
-          <div class="relative">
-            <div class="w-24 h-24 rounded-xl overflow-hidden shadow-sm" style="border: 1.5px solid var(--warm-200);">
-              <img src={imgUrl(art.bildId, 200)} alt="" class="w-full h-full object-cover" loading="lazy" onerror={(e) => { (e.currentTarget as HTMLImageElement).style.display='none'; }} />
+  <!-- Row 1: Top Artikel -->
+  <div class="rounded-xl p-4" style="background: white; border: 1px solid var(--warm-200);">
+    <div class="flex items-center justify-between mb-3">
+      <h3 class="text-xs font-semibold uppercase tracking-[0.15em]" style="color: var(--warm-400);">Top {artShowAll ? 30 : 10} Artikel</h3>
+      <button onclick={() => artShowAll = !artShowAll} class="text-[10px] font-medium px-3 py-1 rounded-lg" style="color: var(--accent); border: 1px solid var(--warm-200);">
+        {artShowAll ? 'Weniger' : 'Top 30 zeigen'}
+      </button>
+    </div>
+    <div class="overflow-y-auto" style="max-height: {artShowAll ? '420px' : '210px'};">
+      <div class="flex flex-wrap gap-3 content-start">
+        {#each (artShowAll ? topArticles : topArticles.slice(0, 10)) as art, i}
+          <div class="flex-shrink-0 w-24">
+            <div class="relative">
+              <div class="w-24 h-24 rounded-xl overflow-hidden shadow-sm" style="border: 1.5px solid var(--warm-200);">
+                <img src={imgUrl(art.bildId, 200)} alt="" class="w-full h-full object-cover" loading="lazy" onerror={(e) => { (e.currentTarget as HTMLImageElement).style.display='none'; }} />
+              </div>
+              <div class="absolute -top-1.5 -left-1.5 w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold" style="background: var(--accent); color: white;">
+                {i + 1}
+              </div>
             </div>
-            <div class="absolute -top-1.5 -left-1.5 w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold" style="background: var(--accent); color: white;">
-              {i + 1}
+            <div class="mt-1.5 text-center">
+              <p class="text-[10px] font-semibold tabular-nums" style="color: var(--warm-700);">{fmtEUR(art.umsatz)}</p>
+              <p class="text-[9px] tabular-nums" style="color: var(--warm-400);">{fmtNum(art.anzahl)} Stk</p>
+              {#if art.nr}<a href="https://www.konplott.com/go/{art.nr}" target="_blank" rel="noopener" class="text-[8px] underline" style="color: var(--accent);">Shop ↗</a>{/if}
+            </div>
+            <div class="mt-1 space-y-0">
+              {#each art.topShops as shop}
+                <p class="text-[8px] truncate" style="color: var(--warm-400);" title={shop.name}>{shop.name} ({shop.anzahl})</p>
+              {/each}
             </div>
           </div>
-          <div class="mt-1.5 text-center">
-            <p class="text-[10px] font-semibold tabular-nums" style="color: var(--warm-700);">{fmtEUR(art.umsatz)}</p>
-            <p class="text-[9px] tabular-nums" style="color: var(--warm-400);">{fmtNum(art.anzahl)} Stk</p>
-            {#if art.nr}<a href="https://www.konplott.com/go/{art.nr}" target="_blank" rel="noopener" class="text-[8px] underline" style="color: var(--accent);">Shop ↗</a>{/if}
-          </div>
-        </div>
-      {/each}
+        {/each}
+      </div>
     </div>
   </div>
 
