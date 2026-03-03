@@ -156,9 +156,18 @@
   let tmField = $state<TreemapField>('Kollektion');
   let tmTop20 = $state(false);
   let tmHideSonstige = $state(false);
+  let tmUseLastKW = $state(false);
   interface DrillLevel { label: string; field: string; value: string; }
   let tmDrill = $state<DrillLevel[]>([]);
   interface TmNode { label: string; value: number; bildId: string; drillKey: string; compValue: number; }
+
+  // Letzte KW data for treemap
+  let lastKW = $derived(availableKWs.length > 0 ? availableKWs[availableKWs.length - 1] : '');
+  let prevKW = $derived(availableKWs.length > 1 ? availableKWs[availableKWs.length - 2] : '');
+  let tmData = $derived(tmUseLastKW ? allData.filter(r => r.KW === lastKW) : data);
+  let tmCompData = $derived(tmUseLastKW ? allData.filter(r => r.KW === prevKW) : compareData);
+  let tmLabel = $derived(tmUseLastKW ? 'KW ' + lastKW : 'KW ' + currentKW);
+  let tmCompLabel = $derived(tmUseLastKW ? 'KW ' + prevKW : compKWLabel);
   function tmDrillPath(field: TreemapField): string[] {
     if (field === 'Kollektion') return ['Kollektion', 'FormPfad', 'Artikel', 'Kasse'];
     if (field === 'FormPfad') return ['FormPfad', 'Kollektion', 'Artikel', 'Kasse'];
@@ -169,7 +178,7 @@
   let tmCurrentField = $derived(tmPathArr[tmCurrentLevel] || tmPathArr[tmPathArr.length - 1]);
   let tmCanDrill = $derived(tmCurrentLevel < tmPathArr.length - 1);
   let treemapNodes = $derived.by((): TmNode[] => {
-    let rows = data; let cRows = compareData;
+    let rows = tmData; let cRows = tmCompData;
     for (const d of tmDrill) {
       const fn = (r: RawRow) => d.field === 'Artikel' ? String(r.BildId) === d.value : (r as any)[d.field] === d.value;
       rows = rows.filter(fn); cRows = cRows.filter(fn);
@@ -317,6 +326,12 @@
       </div>
       <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" bind:checked={tmTop20} class="accent-[var(--accent)]" /><span class="text-[11px]" style="color: var(--warm-500);">Nur Top 20</span></label>
       <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" bind:checked={tmHideSonstige} class="accent-[var(--accent)]" /><span class="text-[11px]" style="color: var(--warm-500);">Sonstige ausblenden</span></label>
+      <div class="flex rounded-lg overflow-hidden" style="border: 1px solid var(--warm-200);">
+        <button onclick={() => tmUseLastKW = false} class="px-2.5 py-1 text-[10px] font-medium"
+          style="background: {!tmUseLastKW ? 'var(--accent)' : 'white'}; color: {!tmUseLastKW ? 'white' : 'var(--warm-500)'};">KW {currentKW}</button>
+        <button onclick={() => tmUseLastKW = true} class="px-2.5 py-1 text-[10px] font-medium"
+          style="background: {tmUseLastKW ? 'var(--accent)' : 'white'}; color: {tmUseLastKW ? 'white' : 'var(--warm-500)'}; border-left: 1px solid var(--warm-200);">Letzte KW</button>
+      </div>
     </div>
     {#if tmDrill.length > 0}
     <div class="flex items-center gap-1.5 mb-3 flex-wrap">
