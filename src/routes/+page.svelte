@@ -67,6 +67,12 @@
   let availableMonths = $state<string[]>([]);
   let availableYears = $state<string[]>([]);
 
+  // Today's info label
+  const _now = new Date();
+  const _oneJan = new Date(_now.getFullYear(), 0, 1);
+  const _kw = String(Math.ceil(((_now.getTime() - _oneJan.getTime()) / 86400000 + _oneJan.getDay() + 1) / 7)).padStart(2, '0');
+  const todayLabel = `${_now.getDate().toString().padStart(2,'0')}.${(_now.getMonth()+1).toString().padStart(2,'0')}.${_now.getFullYear()} · ${MONAT_ORDER[_now.getMonth()]} · KW ${_kw}`;
+
   let periods = $derived.by((): string[] => {
     if (timeUnit === 'tag') return availableDates;
     if (timeUnit === 'woche') return availableKWs;
@@ -78,24 +84,37 @@
     if (!currentPeriod || periods.length < 2) return '';
     const ci = periods.indexOf(currentPeriod);
     if (compareType === 'vorperiode') return ci > 0 ? periods[ci - 1] : '';
-    return ''; // vorjahr not available with single year data
+    // vorjahr: same period key but previous year
+    if (compareType === 'vorjahr') {
+      if (timeUnit === 'jahr') {
+        const prevY = String(Number(currentPeriod) - 1);
+        return periods.includes(prevY) ? prevY : '';
+      }
+      const [y, rest] = currentPeriod.split('-');
+      const prevYearKey = `${Number(y) - 1}-${rest}`;
+      return periods.includes(prevYearKey) ? prevYearKey : '';
+    }
+    return '';
   });
   let currentPeriodLabel = $derived.by((): string => {
     if (!currentPeriod) return '';
-    if (timeUnit === 'tag') return currentPeriod.slice(5);
-    if (timeUnit === 'woche') return 'KW ' + currentPeriod;
+    if (timeUnit === 'tag') { const [y, m, d] = currentPeriod.split('-'); return `${d}.${m}.${y}`; }
+    if (timeUnit === 'woche') { const [y, k] = currentPeriod.split('-'); return `KW ${k} · ${y}`; }
+    if (timeUnit === 'monat') { const [y, m] = currentPeriod.split('-'); return `${m} ${y}`; }
     return currentPeriod;
   });
   let comparePeriodLabel = $derived.by((): string => {
     if (!comparePeriod) return '';
-    if (timeUnit === 'tag') return comparePeriod.slice(5);
-    if (timeUnit === 'woche') return 'KW ' + comparePeriod;
+    if (timeUnit === 'tag') { const [y, m, d] = comparePeriod.split('-'); return `${d}.${m}.${y}`; }
+    if (timeUnit === 'woche') { const [y, k] = comparePeriod.split('-'); return `KW ${k} · ${y}`; }
+    if (timeUnit === 'monat') { const [y, m] = comparePeriod.split('-'); return `${m} ${y}`; }
     return comparePeriod;
   });
   function periodFilter(r: RawRow, p: string): boolean {
     if (timeUnit === 'tag') return r.Datum === p;
-    if (timeUnit === 'woche') return r.KW === p;
-    if (timeUnit === 'monat') return r.Monat === p;
+    if (timeUnit === 'woche') { const [y, k] = p.split('-'); return (r as any).Jahr === y && r.KW === k; }
+    if (timeUnit === 'monat') { const [y, m] = p.split('-'); return (r as any).Jahr === y && r.Monat === m; }
+    if (timeUnit === 'jahr') return (r as any).Jahr === p;
     return true;
   }
   function goPrev() { if (timeIdx < periods.length - 1) timeIdx++; }
@@ -390,13 +409,31 @@
       (r as any).Jahr = (r as any).Datum ? (r as any).Datum.slice(0, 4) : '2025';
     }
 
-    // Populate filter options
+    // Populate filter options (year-scoped for months & KWs)
     availableYears = [...new Set(allData.map(r => (r as any).Jahr as string))].sort();
-    availableMonths = [...new Set(allData.map(r => r.Monat))].sort((a, b) => MONAT_ORDER.indexOf(a) - MONAT_ORDER.indexOf(b));
-    availableKWs = [...new Set(allData.map(r => r.KW))].sort((a, b) => Number(a) - Number(b));
+    availableMonths = [...new Set(allData.map(r => `${(r as any).Jahr}-${r.Monat}`))].sort((a, b) => {
+      const [ya, ma] = a.split('-'), [yb, mb] = b.split('-');
+      return ya !== yb ? ya.localeCompare(yb) : MONAT_ORDER.indexOf(ma) - MONAT_ORDER.indexOf(mb);
+    });
+    availableKWs = [...new Set(allData.map(r => `${(r as any).Jahr}-${r.KW}`))].sort((a, b) => {
+      const [ya, ka] = a.split('-'), [yb, kb] = b.split('-');
+      return ya !== yb ? ya.localeCompare(yb) : Number(ka) - Number(kb);
+    });
     availableDates = [...new Set(allData.map(r => r.Datum))].sort();
-    // Default: Woche, latest, Vorperiode
-    timeUnit = 'woche'; timeIdx = 0;
+
+    // Default: current KW in current year
+    const now = new Date();
+    const currentYear = String(now.getFullYear());
+    const oneJan = new Date(now.getFullYear(), 0, 1);
+    const currentKW = String(Math.ceil(((now.getTime() - oneJan.getTime()) / 86400000 + oneJan.getDay() + 1) / 7)).padStart(2, '0');
+    const currentYearKW = `${currentYear}-${currentKW}`;
+    timeUnit = 'woche';
+    const kwIdx = availableKWs.indexOf(currentYearKW);
+    if (kwIdx >= 0) {
+      timeIdx = availableKWs.length - 1 - kwIdx;
+    } else {
+      timeIdx = 0; // fallback to latest
+    }
 
     loading = false;
   });
@@ -471,6 +508,9 @@
             Vgl: {compTotalAnzahl > 0 ? fmtNum(compTotalAnzahl) + ' Stk' : 'keine Daten'}
           </span>
         {/if}
+        <div class="ml-auto text-right">
+          <p class="text-[10px] font-semibold" style="color: var(--warm-600);">Heute: {todayLabel}</p>
+        </div>
       </div>
       <!-- Tabs -->
       <div class="flex flex-col gap-0 -mb-px overflow-x-auto">
