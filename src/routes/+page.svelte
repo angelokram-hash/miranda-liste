@@ -387,7 +387,7 @@
     for (const r of allData) {
       (r as any).FormPfad = (r as any).FormPfad || ((r.Form || '').trim().split(/\s+/)[0]) || '(leer)';
       (r as any).Preisgruppe = getPreisgruppe(Number(r.EinzelPreis) || 0);
-      (r as any).Jahr = '2026'; // single year dataset — extend when multi-year data arrives
+      (r as any).Jahr = (r as any).Datum ? (r as any).Datum.slice(0, 4) : '2025';
     }
 
     // Populate filter options
