@@ -10,6 +10,7 @@ export interface KasseStat { kasse: string; anzahl: number; }
 
 export interface ArticleNode {
   bildId: string; umsatz: number; anzahl: number;
+  nr?: string; kollektion?: string; einzelPreis?: number;
   kassenStats: KasseStat[];
 }
 
@@ -113,19 +114,23 @@ export function getAvailableKWs(data: RawRow[]): string[] {
 
 // ─── Aggregation ───
 function buildArticles(rows: RawRow[]): ArticleNode[] {
-  const m = new Map<string, { umsatz: number; anzahl: number; kassen: Map<string, number> }>();
+  const m = new Map<string, { nr: string; kollektion: string; umsatz: number; anzahl: number; kassen: Map<string, number> }>();
   for (const r of rows) {
     const bid = String(r.BildId);
     if (!bid || bid === '0') continue;
-    if (!m.has(bid)) m.set(bid, { umsatz: 0, anzahl: 0, kassen: new Map() });
+    if (!m.has(bid)) m.set(bid, { nr: '', kollektion: '', umsatz: 0, anzahl: 0, kassen: new Map() });
     const a = m.get(bid)!;
+    if (!a.nr && r.Nr) a.nr = String(r.Nr);
+    if (!a.kollektion && r.Kollektion) a.kollektion = r.Kollektion;
     const an = Number(r.Anzahl) || 0;
     a.umsatz += (Number(r.EinzelPreis) || 0) * an;
     a.anzahl += an;
     a.kassen.set(r.Kasse, (a.kassen.get(r.Kasse) || 0) + an);
   }
   return Array.from(m.entries()).map(([bildId, a]) => ({
-    bildId, umsatz: a.umsatz, anzahl: a.anzahl,
+    bildId, nr: a.nr || undefined, kollektion: a.kollektion || undefined,
+    einzelPreis: a.anzahl > 0 ? a.umsatz / a.anzahl : undefined,
+    umsatz: a.umsatz, anzahl: a.anzahl,
     kassenStats: Array.from(a.kassen.entries()).map(([kasse, anzahl]) => ({ kasse, anzahl })).sort((x, y) => y.anzahl - x.anzahl),
   })).sort((a, b) => b.umsatz - a.umsatz);
 }

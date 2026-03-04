@@ -17,6 +17,7 @@
 
   interface ArticleNode {
     bildId: string; umsatz: number; anzahl: number;
+    nr?: string; kollektion?: string; einzelPreis?: number;
     kassenStats: KasseStat[];
   }
 
@@ -171,6 +172,66 @@
   let artikelHideLow = $state(false);
   let artikelMinCount = 5;
 
+  // ─── Pick & Share (named article lists) ───
+  interface PickItem { nr: string; bildId: string; kollektion: string; einzelPreis: number; }
+  interface PickList { name: string; items: PickItem[]; }
+  let savedLists: PickList[] = $state([]);
+  let activeListName = $state('');
+  let activeItems: Map<string, PickItem> = $state(new Map());
+  let pickPanelOpen = $state(false);
+  let pickMenuOpen = $state(false);
+  let saveAsMode = $state(false);
+  let saveAsName = $state('');
+
+  function persistLists() { localStorage.setItem('miranda-picks', JSON.stringify(savedLists)); }
+  function togglePick(art: ArticleNode) {
+    if (!art.nr) return;
+    const m = new Map(activeItems);
+    if (m.has(art.nr)) { m.delete(art.nr); }
+    else { m.set(art.nr, { nr: art.nr, bildId: art.bildId, kollektion: art.kollektion || '', einzelPreis: art.einzelPreis || 0 }); }
+    activeItems = m;
+  }
+  function removeFromPick(nr: string) { const m = new Map(activeItems); m.delete(nr); activeItems = m; }
+  function clearPick() { activeItems = new Map(); activeListName = ''; }
+  function savePick() {
+    if (!activeListName) { saveAsMode = true; return; }
+    const items = Array.from(activeItems.values());
+    const idx = savedLists.findIndex(l => l.name === activeListName);
+    if (idx >= 0) { savedLists[idx] = { name: activeListName, items }; } else { savedLists = [...savedLists, { name: activeListName, items }]; }
+    persistLists();
+  }
+  function savePickAs(name: string) {
+    if (!name.trim()) return;
+    activeListName = name.trim();
+    const items = Array.from(activeItems.values());
+    const existing = savedLists.findIndex(l => l.name === activeListName);
+    if (existing >= 0) { savedLists[existing] = { name: activeListName, items }; } else { savedLists = [...savedLists, { name: activeListName, items }]; }
+    persistLists(); saveAsMode = false; saveAsName = '';
+  }
+  function openList(list: PickList) {
+    activeListName = list.name;
+    const m = new Map<string, PickItem>();
+    for (const it of list.items) m.set(it.nr, it);
+    activeItems = m;
+    pickPanelOpen = true; pickMenuOpen = false;
+  }
+  function deleteList(name: string) {
+    savedLists = savedLists.filter(l => l.name !== name);
+    persistLists();
+    if (activeListName === name) { activeListName = ''; activeItems = new Map(); }
+  }
+  function buildPickText(): string {
+    return Array.from(activeItems.values()).map(it => `${it.nr} — https://konplott.com/go/${it.nr}`).join('\n');
+  }
+  function copyPick() { navigator.clipboard.writeText(buildPickText()); }
+  function sharePickUrl() {
+    const nrs = Array.from(activeItems.keys()).join(',');
+    const name = encodeURIComponent(activeListName || 'Liste');
+    const url = `${location.origin}${location.pathname}#pick=${name}&nrs=${nrs}`;
+    if (navigator.share) { navigator.share({ title: `Pick & Share: ${activeListName || 'Liste'}`, url }); }
+    else { navigator.clipboard.writeText(url); }
+  }
+
   // ─── Derived: filtered data ───
   let hasFilter = $derived(currentPeriod !== '');
 
@@ -242,20 +303,22 @@
   // All articles for Artikel tab
   let allArticles = $derived.by(() => {
     if (!filteredData.length) return { items: [] as ArticleNode[], sonstige: null as ArticleNode | null };
-    const artMap = new Map<string, { nr: string; umsatz: number; anzahl: number; kassen: Map<string, number> }>();
+    const artMap = new Map<string, { nr: string; kollektion: string; umsatz: number; anzahl: number; kassen: Map<string, number> }>();
     for (const r of filteredData) {
       const bid = String(r.BildId);
       if (!bid || bid === '0') continue;
-      if (!artMap.has(bid)) artMap.set(bid, { nr: String(r.Nr || ''), umsatz: 0, anzahl: 0, kassen: new Map() });
+      if (!artMap.has(bid)) artMap.set(bid, { nr: String(r.Nr || ''), kollektion: r.Kollektion || '', umsatz: 0, anzahl: 0, kassen: new Map() });
       const a = artMap.get(bid)!;
       if (!a.nr && r.Nr) a.nr = String(r.Nr);
+      if (!a.kollektion && r.Kollektion) a.kollektion = r.Kollektion;
       const an = Number(r.Anzahl) || 0;
       a.umsatz += (Number(r.EinzelPreis) || 0) * an;
       a.anzahl += an;
       a.kassen.set(r.Kasse, (a.kassen.get(r.Kasse) || 0) + an);
     }
     let items: ArticleNode[] = Array.from(artMap.entries()).map(([bildId, a]) => ({
-      bildId, nr: a.nr, umsatz: a.umsatz, anzahl: a.anzahl,
+      bildId, nr: a.nr, kollektion: a.kollektion, einzelPreis: a.anzahl > 0 ? a.umsatz / a.anzahl : undefined,
+      umsatz: a.umsatz, anzahl: a.anzahl,
       kassenStats: Array.from(a.kassen.entries()).map(([kasse, anzahl]) => ({ kasse, anzahl })).sort((x, y) => y.anzahl - x.anzahl),
     }));
     items.sort((a, b) => artikelSortMode === 'umsatz' ? b.umsatz - a.umsatz : b.anzahl - a.anzahl);
@@ -267,7 +330,7 @@
       if (art.anzahl >= artikelMinCount) { shown.push(art); }
       else { sU += art.umsatz; sA += art.anzahl; for (const ks of art.kassenStats) sK.set(ks.kasse, (sK.get(ks.kasse) || 0) + ks.anzahl); }
     }
-    const sonstige: ArticleNode | null = sA > 0 ? { bildId: '', nr: '', umsatz: sU, anzahl: sA,
+    const sonstige: ArticleNode | null = sA > 0 ? { bildId: '', nr: '', kollektion: '', umsatz: sU, anzahl: sA,
       kassenStats: Array.from(sK.entries()).map(([kasse, anzahl]) => ({ kasse, anzahl })).sort((x, y) => y.anzahl - x.anzahl),
     } : null;
     return { items: shown, sonstige };
@@ -589,6 +652,33 @@
       timeIdx = 0;
     }
 
+    // ─── Pick & Share: restore from localStorage + hash ───
+    try { const stored = localStorage.getItem('miranda-picks'); if (stored) savedLists = JSON.parse(stored); } catch {}
+    // Load list from URL hash: #pick=Name&nrs=nr1,nr2,...
+    if (location.hash.includes('pick=')) {
+      const params = new URLSearchParams(location.hash.slice(1));
+      const hashName = decodeURIComponent(params.get('pick') || 'Liste');
+      const hashNrs = (params.get('nrs') || '').split(',').filter(Boolean);
+      if (hashNrs.length) {
+        // Build nr→article lookup from loaded data
+        const nrLookup = new Map<string, { bildId: string; kollektion: string; einzelPreis: number }>();
+        for (const r of allData) {
+          const nr = String(r.Nr);
+          if (nr && !nrLookup.has(nr)) nrLookup.set(nr, { bildId: String(r.BildId), kollektion: r.Kollektion || '', einzelPreis: Number(r.EinzelPreis) || 0 });
+        }
+        const m = new Map<string, PickItem>();
+        for (const nr of hashNrs) {
+          const info = nrLookup.get(nr);
+          if (info) m.set(nr, { nr, bildId: info.bildId, kollektion: info.kollektion, einzelPreis: info.einzelPreis });
+          else m.set(nr, { nr, bildId: '', kollektion: '', einzelPreis: 0 });
+        }
+        activeItems = m;
+        activeListName = hashName;
+        pickPanelOpen = true;
+        history.replaceState(null, '', location.pathname);
+      }
+    }
+
     loading = false;
   });
 
@@ -633,6 +723,38 @@
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
             Logout
           </button>
+          <!-- Listen dropdown -->
+          <div class="relative">
+            <button onclick={() => pickMenuOpen = !pickMenuOpen}
+              class="flex items-center gap-1.5 px-3 py-2 text-[10px] font-medium rounded-xl transition-all"
+              style="border: 1.5px solid {pickMenuOpen ? 'var(--accent)' : 'var(--warm-200)'}; color: {pickMenuOpen ? 'var(--accent)' : 'var(--warm-500)'}; background: white;"
+              title="Gespeicherte Listen">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+              Listen{#if savedLists.length > 0}<span class="ml-1 px-1.5 py-0.5 rounded-full text-[8px] font-bold" style="background: var(--accent); color: white;">{savedLists.length}</span>{/if}
+            </button>
+            {#if pickMenuOpen}
+              <!-- svelte-ignore a11y_click_events_have_key_events -->
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <div class="absolute right-0 top-full mt-1 w-56 rounded-xl shadow-lg z-50 py-2" style="background: white; border: 1px solid var(--warm-200);" onclick={(e) => e.stopPropagation()}>
+                <p class="px-3 pb-1.5 text-[9px] font-bold uppercase tracking-[0.12em]" style="color: var(--warm-400);">Gespeicherte Listen</p>
+                {#if savedLists.length === 0}
+                  <p class="px-3 py-2 text-[10px]" style="color: var(--warm-400);">Noch keine Listen gespeichert</p>
+                {:else}
+                  {#each savedLists as list}
+                    <div class="flex items-center justify-between px-3 py-1.5 hover:bg-[var(--warm-50)] group">
+                      <button class="text-[11px] font-medium truncate flex-1 text-left" style="color: {activeListName === list.name ? 'var(--accent)' : 'var(--warm-700)'};" onclick={() => openList(list)}>
+                        {list.name} <span class="text-[9px]" style="color: var(--warm-400);">({list.items.length})</span>
+                      </button>
+                      <button class="ml-2 text-[10px] opacity-0 group-hover:opacity-100 transition-opacity" style="color: var(--warm-400);" onclick={() => deleteList(list.name)} title="Liste löschen">✕</button>
+                    </div>
+                  {/each}
+                {/if}
+                <div style="border-top: 1px solid var(--warm-100);" class="mt-1.5 pt-1.5">
+                  <button class="w-full text-left px-3 py-1.5 text-[10px] font-medium hover:bg-[var(--warm-50)]" style="color: var(--accent);" onclick={() => { clearPick(); pickPanelOpen = true; pickMenuOpen = false; }}>+ Neue Liste</button>
+                </div>
+              </div>
+            {/if}
+          </div>
           <div class="relative">
             <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style="color: var(--warm-400);" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
             <input type="text" bind:value={searchTerm} placeholder="Suchen..."
@@ -874,8 +996,9 @@
                 <!-- svelte-ignore a11y_click_events_have_key_events -->
                 <!-- svelte-ignore a11y_no_static_element_interactions -->
                 <div class="cursor-pointer" onclick={() => expandedArticles = toggleSet(expandedArticles, aKey)}>
-                  <div class="w-20 h-20 sm:w-24 sm:h-24 rounded-xl overflow-hidden shadow-sm transition-all hover:shadow-lg hover:scale-105" style="border: 1.5px solid {aOpen ? 'var(--accent)' : 'var(--warm-200)'};">
+                  <div class="relative w-20 h-20 sm:w-24 sm:h-24 rounded-xl overflow-hidden shadow-sm transition-all hover:shadow-lg hover:scale-105" style="border: 1.5px solid {aOpen ? 'var(--accent)' : 'var(--warm-200)'};">
                     <img src={imgUrl(art.bildId, 200)} alt="" class="w-full h-full object-cover" loading="lazy" onerror={(e) => { (e.currentTarget as HTMLImageElement).parentElement!.style.display='none'; }} />
+                    {#if art.nr}<button class="absolute top-0.5 right-0.5 w-5 h-5 rounded-full flex items-center justify-center text-white text-[10px] shadow-sm" style="background: {activeItems.has(art.nr) ? 'var(--accent)' : 'rgba(0,0,0,0.45)'};" onclick={(e) => { e.stopPropagation(); togglePick(art); }} title="Zur Liste">{activeItems.has(art.nr) ? '✓' : '+'}</button>{/if}
                   </div>
                   <div class="mt-1.5 text-center">
                     <p class="text-[10px] font-medium tabular-nums" style="color: var(--warm-700);">{fmtEUR(art.umsatz)}</p>
@@ -1063,8 +1186,9 @@
                                                 <!-- svelte-ignore a11y_click_events_have_key_events -->
                                                 <!-- svelte-ignore a11y_no_static_element_interactions -->
                                                 <div class="cursor-pointer" onclick={(e) => { e.stopPropagation(); expandedArticles = toggleSet(expandedArticles, aKey); }}>
-                                                  <div class="w-14 h-14 sm:w-18 sm:h-18 rounded-lg overflow-hidden shadow-sm transition-all hover:shadow-md hover:scale-105" style="border: 1.5px solid {aOpen ? 'var(--accent)' : 'var(--warm-200)'};">
+                                                  <div class="relative w-14 h-14 sm:w-18 sm:h-18 rounded-lg overflow-hidden shadow-sm transition-all hover:shadow-md hover:scale-105" style="border: 1.5px solid {aOpen ? 'var(--accent)' : 'var(--warm-200)'};">
                                                     <img src={imgUrl(art.bildId, 140)} alt="" class="w-full h-full object-cover" loading="lazy" onerror={(e) => { (e.currentTarget as HTMLImageElement).parentElement!.style.display='none'; }} />
+                                                    {#if art.nr}<button class="absolute top-0.5 right-0.5 w-4 h-4 rounded-full flex items-center justify-center text-white text-[8px] shadow-sm" style="background: {activeItems.has(art.nr) ? 'var(--accent)' : 'rgba(0,0,0,0.45)'};" onclick={(e) => { e.stopPropagation(); togglePick(art); }} title="Zur Liste">{activeItems.has(art.nr) ? '✓' : '+'}</button>{/if}
                                                   </div>
                                                   <div class="mt-0.5 text-center"><p class="text-[8px] font-medium tabular-nums" style="color: var(--warm-700);">{fmtEUR(art.umsatz)}</p><p class="text-[7px] tabular-nums" style="color: var(--warm-400);">{fmtNum(art.anzahl)} Stk</p></div>
                                                 </div>
@@ -1105,8 +1229,9 @@
                                       <!-- svelte-ignore a11y_click_events_have_key_events -->
                                       <!-- svelte-ignore a11y_no_static_element_interactions -->
                                       <div class="cursor-pointer" onclick={(e) => { e.stopPropagation(); expandedArticles = toggleSet(expandedArticles, aKey); }}>
-                                        <div class="w-16 h-16 sm:w-20 sm:h-20 rounded-lg overflow-hidden shadow-sm transition-all hover:shadow-md hover:scale-105" style="border: 1.5px solid {aOpen ? 'var(--accent)' : 'var(--warm-200)'};">
+                                        <div class="relative w-16 h-16 sm:w-20 sm:h-20 rounded-lg overflow-hidden shadow-sm transition-all hover:shadow-md hover:scale-105" style="border: 1.5px solid {aOpen ? 'var(--accent)' : 'var(--warm-200)'};">
                                           <img src={imgUrl(art.bildId, 160)} alt="" class="w-full h-full object-cover" loading="lazy" onerror={(e) => { (e.currentTarget as HTMLImageElement).parentElement!.style.display='none'; }} />
+                                          {#if art.nr}<button class="absolute top-0.5 right-0.5 w-4 h-4 rounded-full flex items-center justify-center text-white text-[9px] shadow-sm" style="background: {activeItems.has(art.nr) ? 'var(--accent)' : 'rgba(0,0,0,0.45)'};" onclick={(e) => { e.stopPropagation(); togglePick(art); }} title="Zur Liste">{activeItems.has(art.nr) ? '✓' : '+'}</button>{/if}
                                         </div>
                                         <div class="mt-1 text-center"><p class="text-[9px] font-medium tabular-nums" style="color: var(--warm-700);">{fmtEUR(art.umsatz)}</p><p class="text-[8px] tabular-nums" style="color: var(--warm-400);">{fmtNum(art.anzahl)} Stk</p></div>
                                       </div>
@@ -1146,8 +1271,9 @@
                           <!-- svelte-ignore a11y_click_events_have_key_events -->
                           <!-- svelte-ignore a11y_no_static_element_interactions -->
                           <div class="cursor-pointer" onclick={(e) => { e.stopPropagation(); expandedArticles = toggleSet(expandedArticles, aKey); }}>
-                            <div class="w-20 h-20 sm:w-24 sm:h-24 rounded-xl overflow-hidden shadow-sm transition-all hover:shadow-lg hover:scale-105" style="border: 1.5px solid {aOpen ? 'var(--accent)' : 'var(--warm-200)'};">
+                            <div class="relative w-20 h-20 sm:w-24 sm:h-24 rounded-xl overflow-hidden shadow-sm transition-all hover:shadow-lg hover:scale-105" style="border: 1.5px solid {aOpen ? 'var(--accent)' : 'var(--warm-200)'};">
                               <img src={imgUrl(art.bildId, 200)} alt="" class="w-full h-full object-cover" loading="lazy" onerror={(e) => { (e.currentTarget as HTMLImageElement).parentElement!.style.display='none'; }} />
+                              {#if art.nr}<button class="absolute top-0.5 right-0.5 w-5 h-5 rounded-full flex items-center justify-center text-white text-[10px] shadow-sm" style="background: {activeItems.has(art.nr) ? 'var(--accent)' : 'rgba(0,0,0,0.45)'};" onclick={(e) => { e.stopPropagation(); togglePick(art); }} title="Zur Liste">{activeItems.has(art.nr) ? '✓' : '+'}</button>{/if}
                             </div>
                             <div class="mt-1.5 text-center"><p class="text-[10px] font-medium tabular-nums" style="color: var(--warm-700);">{fmtEUR(art.umsatz)}</p><p class="text-[9px] tabular-nums" style="color: var(--warm-400);">{fmtNum(art.anzahl)} Stk</p></div>
                           </div>
@@ -1187,5 +1313,92 @@
   <div class="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-md" style="background: rgba(31,26,18,0.7);" onclick={() => lightboxUrl = ''}>
     <img src={lightboxUrl} alt="Produkt" class="max-w-[90vw] max-h-[90vh] rounded-2xl shadow-2xl" />
     <button class="absolute top-6 right-6 w-10 h-10 rounded-full flex items-center justify-center text-white text-xl" style="background: rgba(0,0,0,0.4);" onclick={() => lightboxUrl = ''}>✕</button>
+  </div>
+{/if}
+
+<!-- Pick & Share floating panel -->
+{#if !pickPanelOpen}
+  <button class="fixed bottom-6 right-6 z-40 w-12 h-12 rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-110"
+    style="background: var(--accent); color: white;"
+    onclick={() => pickPanelOpen = true}
+    title="Pick & Share">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+    {#if activeItems.size > 0}
+      <span class="absolute -top-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold" style="background: #ef4444; color: white;">{activeItems.size}</span>
+    {/if}
+  </button>
+{:else}
+  <div class="fixed bottom-6 right-6 z-40 w-80 sm:w-96 max-h-[75vh] rounded-2xl shadow-2xl flex flex-col" style="background: white; border: 1px solid var(--warm-200);">
+    <!-- Header -->
+    <div class="flex items-center justify-between px-4 py-3" style="border-bottom: 1px solid var(--warm-200);">
+      <div class="flex items-center gap-2 flex-1 min-w-0">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--accent); flex-shrink: 0;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        <div class="min-w-0">
+          <p class="text-xs font-bold" style="color: var(--warm-800);">Pick & Share</p>
+          {#if activeListName}
+            <p class="text-[9px] truncate" style="color: var(--accent);">{activeListName}</p>
+          {:else}
+            <p class="text-[9px]" style="color: var(--warm-400);">Neue Liste</p>
+          {/if}
+        </div>
+        {#if activeItems.size > 0}
+          <span class="ml-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold" style="background: var(--accent); color: white;">{activeItems.size}</span>
+        {/if}
+      </div>
+      <button class="w-7 h-7 rounded-full flex items-center justify-center text-sm" style="color: var(--warm-400);" onclick={() => pickPanelOpen = false}>✕</button>
+    </div>
+
+    <!-- Items list -->
+    <div class="flex-1 overflow-y-auto px-3 py-2" style="min-height: 60px; max-height: calc(75vh - 140px);">
+      {#if activeItems.size === 0}
+        <p class="text-center py-6 text-[11px]" style="color: var(--warm-400);">Keine Artikel ausgewählt.<br/>Klicke + auf Artikelbildern.</p>
+      {:else}
+        {#each Array.from(activeItems.values()) as item (item.nr)}
+          <div class="flex items-center gap-2.5 py-2" style="border-bottom: 1px solid var(--warm-100);">
+            <img src={imgUrl(item.bildId, 80)} alt="" class="w-10 h-10 rounded-lg object-cover flex-shrink-0" style="border: 1px solid var(--warm-200);" onerror={(e) => { (e.currentTarget as HTMLImageElement).style.display='none'; }} />
+            <div class="flex-1 min-w-0">
+              <p class="text-[10px] font-semibold truncate" style="color: var(--warm-700);">{item.nr}</p>
+              <p class="text-[9px] truncate" style="color: var(--warm-500);">{item.kollektion}{#if item.einzelPreis > 0} · {fmtEUR(item.einzelPreis)}{/if}</p>
+              <a href="https://konplott.com/go/{item.nr}" target="_blank" rel="noopener" class="text-[8px] underline" style="color: var(--accent);">konplott.com/go/{item.nr}</a>
+            </div>
+            <button class="w-5 h-5 rounded-full flex items-center justify-center text-[10px] flex-shrink-0" style="color: var(--warm-400); background: var(--warm-100);" onclick={() => removeFromPick(item.nr)} title="Entfernen">✕</button>
+          </div>
+        {/each}
+      {/if}
+    </div>
+
+    <!-- Save-As input -->
+    {#if saveAsMode}
+      <div class="flex items-center gap-2 px-3 py-2" style="border-top: 1px solid var(--warm-200);">
+        <input type="text" bind:value={saveAsName} placeholder="Listenname…" class="flex-1 text-[11px] px-2 py-1.5 rounded-lg outline-none" style="border: 1px solid var(--warm-200);" onkeydown={(e) => { if (e.key === 'Enter') savePickAs(saveAsName); if (e.key === 'Escape') { saveAsMode = false; saveAsName = ''; } }} />
+        <button class="px-2 py-1.5 text-[10px] font-medium rounded-lg" style="background: var(--accent); color: white;" onclick={() => savePickAs(saveAsName)}>OK</button>
+        <button class="text-[10px]" style="color: var(--warm-400);" onclick={() => { saveAsMode = false; saveAsName = ''; }}>✕</button>
+      </div>
+    {/if}
+
+    <!-- Footer actions -->
+    <div class="flex items-center gap-1 px-3 py-2.5 flex-wrap" style="border-top: 1px solid var(--warm-200);">
+      <button onclick={copyPick} disabled={activeItems.size === 0}
+        class="px-2.5 py-1.5 text-[10px] font-medium rounded-lg transition-all disabled:opacity-30"
+        style="border: 1px solid var(--warm-200); color: var(--warm-600); background: white;"
+        title="In Zwischenablage kopieren">Kopieren</button>
+      <button onclick={sharePickUrl} disabled={activeItems.size === 0}
+        class="px-2.5 py-1.5 text-[10px] font-medium rounded-lg transition-all disabled:opacity-30"
+        style="border: 1px solid var(--warm-200); color: var(--warm-600); background: white;"
+        title="Als URL teilen">Teilen</button>
+      <button onclick={savePick} disabled={activeItems.size === 0}
+        class="px-2.5 py-1.5 text-[10px] font-medium rounded-lg transition-all disabled:opacity-30"
+        style="background: var(--accent); color: white;"
+        title="Speichern">{activeListName ? 'Speichern' : 'Speichern als…'}</button>
+      {#if activeListName}
+        <button onclick={() => { saveAsMode = true; saveAsName = ''; }}
+          class="px-2.5 py-1.5 text-[10px] font-medium rounded-lg transition-all"
+          style="border: 1px solid var(--warm-200); color: var(--warm-600); background: white;">Speichern als…</button>
+      {/if}
+      <button onclick={clearPick} disabled={activeItems.size === 0}
+        class="px-2.5 py-1.5 text-[10px] font-medium rounded-lg transition-all disabled:opacity-30 ml-auto"
+        style="color: #ef4444; border: 1px solid #fecaca; background: white;"
+        title="Liste leeren">Leeren</button>
+    </div>
   </div>
 {/if}
