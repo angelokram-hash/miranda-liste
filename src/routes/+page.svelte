@@ -231,6 +231,28 @@
     if (navigator.share) { navigator.share({ title: `Pick & Share: ${activeListName || 'Liste'}`, url }); }
     else { navigator.clipboard.writeText(url); }
   }
+  function openKatalogForList(list: PickList) {
+    const arr = list.items;
+    const nrs = arr.map(it => it.nr).join(',');
+    const bids = arr.map(it => it.bildId).join(',');
+    const kolls = arr.map(it => encodeURIComponent(it.kollektion)).join(',');
+    const prices = arr.map(it => it.einzelPreis).join(',');
+    const name = encodeURIComponent(list.name);
+    const date = new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    const url = `${location.origin}/katalog#name=${name}&nrs=${nrs}&bids=${bids}&kolls=${kolls}&prices=${prices}&date=${encodeURIComponent(date)}`;
+    window.open(url, '_blank');
+  }
+  function openKatalog() {
+    const arr = Array.from(activeItems.values());
+    const nrs = arr.map(it => it.nr).join(',');
+    const bids = arr.map(it => it.bildId).join(',');
+    const kolls = arr.map(it => encodeURIComponent(it.kollektion)).join(',');
+    const prices = arr.map(it => it.einzelPreis).join(',');
+    const name = encodeURIComponent(activeListName || 'Katalog');
+    const date = new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    const url = `${location.origin}/katalog#name=${name}&nrs=${nrs}&bids=${bids}&kolls=${kolls}&prices=${prices}&date=${encodeURIComponent(date)}`;
+    window.open(url, '_blank');
+  }
 
   // ─── Derived: filtered data ───
   let hasFilter = $derived(currentPeriod !== '');
@@ -745,7 +767,10 @@
                       <button class="text-[11px] font-medium truncate flex-1 text-left" style="color: {activeListName === list.name ? 'var(--accent)' : 'var(--warm-700)'};" onclick={() => openList(list)}>
                         {list.name} <span class="text-[9px]" style="color: var(--warm-400);">({list.items.length})</span>
                       </button>
-                      <button class="ml-2 text-[10px] opacity-0 group-hover:opacity-100 transition-opacity" style="color: var(--warm-400);" onclick={() => deleteList(list.name)} title="Liste löschen">✕</button>
+                      <button class="ml-2 text-[10px] opacity-0 group-hover:opacity-100 transition-opacity" style="color: var(--accent);" onclick={() => openKatalogForList(list)} title="Katalog öffnen">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                      </button>
+                      <button class="ml-1 text-[10px] opacity-0 group-hover:opacity-100 transition-opacity" style="color: var(--warm-400);" onclick={() => deleteList(list.name)} title="Liste löschen">✕</button>
                     </div>
                   {/each}
                 {/if}
@@ -1386,6 +1411,10 @@
         class="px-2.5 py-1.5 text-[10px] font-medium rounded-lg transition-all disabled:opacity-30"
         style="border: 1px solid var(--warm-200); color: var(--warm-600); background: white;"
         title="Als URL teilen">Teilen</button>
+      <button onclick={openKatalog} disabled={activeItems.size === 0}
+        class="px-2.5 py-1.5 text-[10px] font-medium rounded-lg transition-all disabled:opacity-30"
+        style="border: 1px solid var(--warm-200); color: var(--warm-600); background: white;"
+        title="Als Katalog-OnePager öffnen">Katalog</button>
       <button onclick={savePick} disabled={activeItems.size === 0}
         class="px-2.5 py-1.5 text-[10px] font-medium rounded-lg transition-all disabled:opacity-30"
         style="background: var(--accent); color: white;"
