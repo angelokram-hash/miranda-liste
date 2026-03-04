@@ -33,6 +33,8 @@
   const ROLE_KASSEN: Record<string, string[] | null> = {
     'all': null,           // null = show all
     'koblenz': ['Koblenz', 'Köln Weiden'],
+    'nrw': ['Düsseldorf', 'Essen', 'Bochum'],
+    'frankfurt': ['Frankfurt'],
   };
   let userRole = $state('all');
   let allowedKassen = $derived(ROLE_KASSEN[userRole] || null);

@@ -3,13 +3,17 @@
   let { children } = $props();
 
   // Password → role mapping (SHA-256 hashes)
-  // "miranda"     → all shops
-  // "konplott"    → all shops
-  // "glitzer1968" → only Koblenz + Köln Weiden
+  // "miranda"       → all shops
+  // "konplott8080"  → all shops
+  // "glitzer1968"   → Koblenz + Köln Weiden
+  // "konplottnrw"   → Düsseldorf + Essen + Bochum
+  // "konplottnina"  → Frankfurt
   const PW_ROLES = [
     { hash: '4d9cb7a511c6f91c59281da6b82487e928c90b9f812f688b78ed7d6139719bdc', role: 'all' },       // miranda
-    { hash: '20991093a170515b7f23efb7a902c8f453bb8e7b879dd693c87c3b08a7bf891a', role: 'all' },       // konplott
+    { hash: '64e278ada965078d9b3761d3e90c23c8fe45d29b78d7116881f1dfbc6d7d4c9e', role: 'all' },       // konplott8080
     { hash: 'd73a90df533206be2609286d66afd8b2ce46685b403ca4dbd92faf352ab8ad4e', role: 'koblenz' },   // glitzer1968
+    { hash: 'e99813429f92eee2a118399d0fbb3df8e103fbb39aa60334c5fb28fa94d3bae2', role: 'nrw' },       // konplottnrw
+    { hash: '4e4b9ba59275492f1841b8ed0638563bfddccf505d9724d6cfc041b185fb23d6', role: 'frankfurt' }, // konplottnina
   ];
 
   let auth = $state(false);
