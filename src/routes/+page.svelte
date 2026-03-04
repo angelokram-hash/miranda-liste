@@ -29,6 +29,15 @@
 
   type TabId = 'dashboard' | 'kollektion' | 'artikel' | 'form' | 'art' | 'formpfad' | 'preis' | 'kasse' | 'custom' | 'bubble' | 'bar' | 'pie' | 'area';
 
+  // ─── Role-based Kasse filter ───
+  const ROLE_KASSEN: Record<string, string[] | null> = {
+    'all': null,           // null = show all
+    'koblenz': ['Koblenz', 'Köln Weiden'],
+  };
+  let userRole = $state('all');
+  let allowedKassen = $derived(ROLE_KASSEN[userRole] || null);
+  let roleLabel = $derived(allowedKassen ? allowedKassen.join(' + ') : '');
+
   // ─── State ───
   let allData: RawRow[] = $state([]);
   let loading = $state(true);
@@ -494,7 +503,15 @@
       (r as any).Jahr = r.Datum ? r.Datum.slice(0, 4) : '2025';
     }
 
-    allData = decoded;
+    // Read role from sessionStorage and filter by allowed Kassen
+    const role = sessionStorage.getItem('miranda-role') || 'all';
+    userRole = role;
+    const kassenFilter = ROLE_KASSEN[role] || null;
+    const filtered = kassenFilter
+      ? decoded.filter(r => kassenFilter.includes(r.Kasse))
+      : decoded;
+
+    allData = filtered;
 
     // Build period indices for O(1) lookup
     const _wk = new Map<string, number[]>();
@@ -599,15 +616,29 @@
       <div class="flex items-center justify-between gap-4 mb-3">
         <div>
           <h1 class="text-2xl font-semibold tracking-tight" style="font-family: var(--font-display); color: var(--warm-800);">Mirandas Liste</h1>
-          <p class="text-xs mt-0.5" style="color: var(--warm-400);">{fmtNum(filtered.length)} Einträge · {fmtEUR(totalUmsatz)} Gesamtumsatz</p>
+          <p class="text-xs mt-0.5" style="color: var(--warm-400);">
+            {fmtNum(filtered.length)} Einträge · {fmtEUR(totalUmsatz)} Gesamtumsatz
+            {#if roleLabel}<span class="ml-1 px-2 py-0.5 rounded-full text-[9px] font-semibold" style="background: var(--accent); color: white;">{roleLabel}</span>{/if}
+          </p>
         </div>
-        <div class="relative">
-          <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style="color: var(--warm-400);" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-          <input type="text" bind:value={searchTerm} placeholder="Suchen..."
-            class="pl-10 pr-4 py-2 text-sm rounded-xl w-56 outline-none transition-all"
-            style="border: 1.5px solid var(--warm-200); font-family: var(--font-body); background: white;"
-            onfocus={(e) => e.currentTarget.style.borderColor = 'var(--accent)'}
-            onblur={(e) => e.currentTarget.style.borderColor = 'var(--warm-200)'} />
+        <div class="flex items-center gap-3">
+          <button onclick={() => { sessionStorage.removeItem('miranda-auth'); sessionStorage.removeItem('miranda-role'); location.reload(); }}
+            class="flex items-center gap-1.5 px-3 py-2 text-[10px] font-medium rounded-xl transition-all"
+            style="border: 1.5px solid var(--warm-200); color: var(--warm-500); background: white;"
+            onmouseenter={(e) => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.color = 'var(--accent)'; }}
+            onmouseleave={(e) => { e.currentTarget.style.borderColor = 'var(--warm-200)'; e.currentTarget.style.color = 'var(--warm-500)'; }}
+            title="Abmelden / Kasse wechseln">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+            Logout
+          </button>
+          <div class="relative">
+            <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style="color: var(--warm-400);" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+            <input type="text" bind:value={searchTerm} placeholder="Suchen..."
+              class="pl-10 pr-4 py-2 text-sm rounded-xl w-56 outline-none transition-all"
+              style="border: 1.5px solid var(--warm-200); font-family: var(--font-body); background: white;"
+              onfocus={(e) => e.currentTarget.style.borderColor = 'var(--accent)'}
+              onblur={(e) => e.currentTarget.style.borderColor = 'var(--warm-200)'} />
+          </div>
         </div>
       </div>
       <!-- Time Navigation -->

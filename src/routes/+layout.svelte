@@ -2,8 +2,16 @@
   import '../app.css';
   let { children } = $props();
 
-  // "miranda" → SHA-256
-  const HASH = '4d9cb7a511c6f91c59281da6b82487e928c90b9f812f688b78ed7d6139719bdc';
+  // Password → role mapping (SHA-256 hashes)
+  // "miranda"     → all shops
+  // "konplott"    → all shops
+  // "glitzer1968" → only Koblenz + Köln Weiden
+  const PW_ROLES = [
+    { hash: '4d9cb7a511c6f91c59281da6b82487e928c90b9f812f688b78ed7d6139719bdc', role: 'all' },       // miranda
+    { hash: '20991093a170515b7f23efb7a902c8f453bb8e7b879dd693c87c3b08a7bf891a', role: 'all' },       // konplott
+    { hash: 'd73a90df533206be2609286d66afd8b2ce46685b403ca4dbd92faf352ab8ad4e', role: 'koblenz' },   // glitzer1968
+  ];
+
   let auth = $state(false);
   let pw = $state('');
   let err = $state(false);
@@ -15,8 +23,14 @@
     err = false;
     const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pw));
     const h = Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
-    if (h === HASH) { sessionStorage.setItem('miranda-auth','ok'); auth = true; }
-    else { err = true; shake = true; pw = ''; setTimeout(() => shake = false, 500); }
+    const match = PW_ROLES.find(p => p.hash === h);
+    if (match) {
+      sessionStorage.setItem('miranda-auth', 'ok');
+      sessionStorage.setItem('miranda-role', match.role);
+      auth = true;
+    } else {
+      err = true; shake = true; pw = ''; setTimeout(() => shake = false, 500);
+    }
   }
 </script>
 
