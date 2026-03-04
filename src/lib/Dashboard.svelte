@@ -48,9 +48,10 @@
   const MONAT_ORD = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
   function periodKey(r: RawRow): string {
     if (timeUnit === 'tag') return r.Datum;
-    if (timeUnit === 'woche') return r.KW;
-    if (timeUnit === 'monat') return r.Monat;
-    return '2026';
+    const y = (r.Datum || '').slice(0, 4);
+    if (timeUnit === 'woche') return `${y}-${r.KW}`;
+    if (timeUnit === 'monat') return `${y}-${r.Monat}`;
+    return y;
   }
 
   // ── KPIs ──
