@@ -54,10 +54,12 @@
     return y;
   }
 
+  const MONAT_NUM: Record<string, string> = { 'Jan':'01','Feb':'02','Mär':'03','Apr':'04','Mai':'05','Jun':'06','Jul':'07','Aug':'08','Sep':'09','Okt':'10','Nov':'11','Dez':'12' };
+
   function periodDisplayLabel(p: string): string {
     if (timeUnit === 'tag') { const [y, m, d] = p.split('-'); return `${d}.${m}`; }
-    if (timeUnit === 'woche') { const [, k] = p.split('-'); return `KW${k}`; }
-    if (timeUnit === 'monat') { const [, m] = p.split('-'); return m; }
+    if (timeUnit === 'woche') { const [y, k] = p.split('-'); return `KW${k}.${y}`; }
+    if (timeUnit === 'monat') { const [y, m] = p.split('-'); return `${MONAT_NUM[m] || m}-${y}`; }
     return p;
   }
 

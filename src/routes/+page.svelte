@@ -110,6 +110,29 @@
     if (timeUnit === 'monat') { const [y, m] = comparePeriod.split('-'); return `${m} ${y}`; }
     return comparePeriod;
   });
+  // Date range formatting: "2026-03-02" → "02.03."
+  function fmtDateShort(iso: string): string {
+    if (!iso) return '';
+    const [y, m, d] = iso.split('-');
+    return `${d}.${m}.`;
+  }
+  function fmtDateFull(iso: string): string {
+    if (!iso) return '';
+    const [y, m, d] = iso.split('-');
+    return `${d}.${m}.${y}`;
+  }
+  let currentDateRange = $derived.by((): string => {
+    if (!currentPeriod || timeUnit === 'tag') return '';
+    const range = periodDateRange.get(currentPeriod);
+    if (!range) return '';
+    return `${fmtDateShort(range.min)} – ${fmtDateShort(range.max)}`;
+  });
+  let compareDateRange = $derived.by((): string => {
+    if (!comparePeriod || timeUnit === 'tag') return '';
+    const range = periodDateRange.get(comparePeriod);
+    if (!range) return '';
+    return `${fmtDateShort(range.min)} – ${fmtDateShort(range.max)}`;
+  });
   function periodFilter(r: RawRow, p: string): boolean {
     if (timeUnit === 'tag') return r.Datum === p;
     if (timeUnit === 'woche') { const [y, k] = p.split('-'); return (r as any).Jahr === y && r.KW === k; }
@@ -421,6 +444,8 @@
   let monthIdx = $state(new Map<string, number[]>());
   let dayIdx = $state(new Map<string, number[]>());
   let yearIdx = $state(new Map<string, number[]>());
+  // Date range per period key: { min: "2026-03-02", max: "2026-03-08" }
+  let periodDateRange = $state(new Map<string, { min: string; max: string }>());
 
   function getRowsForPeriod(period: string): RawRow[] {
     const idx = timeUnit === 'woche' ? weekIdx : timeUnit === 'monat' ? monthIdx : timeUnit === 'tag' ? dayIdx : yearIdx;
@@ -500,6 +525,24 @@
     monthIdx = _mo;
     dayIdx = _dy;
     yearIdx = _yr;
+
+    // Build date ranges per period (min/max Datum for each period key)
+    const _ranges = new Map<string, { min: string; max: string }>();
+    function updateRange(key: string, datum: string) {
+      const r = _ranges.get(key);
+      if (!r) { _ranges.set(key, { min: datum, max: datum }); return; }
+      if (datum < r.min) r.min = datum;
+      if (datum > r.max) r.max = datum;
+    }
+    for (const r of allData) {
+      const y = (r as any).Jahr;
+      const d = r.Datum;
+      updateRange(`${y}-${r.KW}`, d);   // week
+      updateRange(`${y}-${r.Monat}`, d); // month
+      updateRange(d, d);                 // day
+      updateRange(y, d);                 // year
+    }
+    periodDateRange = _ranges;
 
     // Populate filter options (year-scoped for months & KWs)
     availableYears = [..._yr.keys()].sort();
@@ -582,9 +625,15 @@
           <button onclick={goPrev} disabled={timeIdx >= periods.length - 1} class="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold disabled:opacity-25" style="background: var(--accent); color: white;">&#9664;</button>
           <div class="text-center min-w-20">
             <p class="text-sm font-bold" style="color: var(--warm-800); font-family: var(--font-heading);">{currentPeriodLabel}</p>
-            {#if comparePeriodLabel}<p class="text-[9px]" style="color: var(--warm-400);">vs {comparePeriodLabel}</p>{/if}
+            {#if currentDateRange}<p class="text-[8px]" style="color: var(--warm-400);">{currentDateRange}</p>{/if}
           </div>
           <button onclick={goNext} disabled={timeIdx <= 0} class="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold disabled:opacity-25" style="background: var(--accent); color: white;">&#9654;</button>
+          {#if comparePeriodLabel}
+            <div class="text-center min-w-20 ml-1 pl-2" style="border-left: 1px solid var(--warm-300);">
+              <p class="text-[9px] font-medium" style="color: var(--warm-400);">vs {comparePeriodLabel}</p>
+              {#if compareDateRange}<p class="text-[8px]" style="color: var(--warm-300);">{compareDateRange}</p>{/if}
+            </div>
+          {/if}
         </div>
         <div class="flex items-center gap-2 ml-1 pl-2" style="border-left: 1.5px solid var(--warm-300);">
           <span class="text-[9px] font-bold uppercase tracking-[0.12em]" style="color: var(--accent);">Vergleich:</span>
@@ -620,8 +669,8 @@
           <span class="px-3 py-1.5 text-[9px] font-bold uppercase tracking-[0.15em] whitespace-nowrap" style="color: var(--warm-400);">Drill Down</span>
           {#each DRILL_TABS as tab}
             <button onclick={() => switchTab(tab.id)}
-              class="px-3 py-1.5 text-[11px] font-medium transition-all border-b-2 whitespace-nowrap"
-              style="color: {activeTab === tab.id ? 'var(--accent)' : 'var(--warm-400)'}; border-color: {activeTab === tab.id ? 'var(--accent)' : 'transparent'}; font-family: var(--font-body);">
+              class="px-3 py-1.5 text-[11px] font-semibold transition-all border-b-2 whitespace-nowrap hover:text-[var(--accent)]"
+              style="color: {activeTab === tab.id ? 'var(--accent)' : 'var(--warm-600)'}; border-color: {activeTab === tab.id ? 'var(--accent)' : 'transparent'}; font-family: var(--font-body); {activeTab !== tab.id ? 'text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--warm-300);' : ''} cursor: pointer;">
               {tab.label}
             </button>
           {/each}
@@ -631,8 +680,8 @@
           <span class="px-3 py-1.5 text-[9px] font-bold uppercase tracking-[0.15em] whitespace-nowrap" style="color: var(--warm-400);">Diagramme</span>
           {#each CHART_TABS as tab}
             <button onclick={() => switchTab(tab.id)}
-              class="px-3 py-1.5 text-[11px] font-medium transition-all border-b-2 whitespace-nowrap"
-              style="color: {activeTab === tab.id ? 'var(--accent)' : 'var(--warm-400)'}; border-color: {activeTab === tab.id ? 'var(--accent)' : 'transparent'}; font-family: var(--font-body);">
+              class="px-3 py-1.5 text-[11px] font-semibold transition-all border-b-2 whitespace-nowrap hover:text-[var(--accent)]"
+              style="color: {activeTab === tab.id ? 'var(--accent)' : 'var(--warm-600)'}; border-color: {activeTab === tab.id ? 'var(--accent)' : 'transparent'}; font-family: var(--font-body); {activeTab !== tab.id ? 'text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--warm-300);' : ''} cursor: pointer;">
               {tab.label}
             </button>
           {/each}
