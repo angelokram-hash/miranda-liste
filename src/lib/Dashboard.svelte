@@ -54,6 +54,13 @@
     return y;
   }
 
+  function periodDisplayLabel(p: string): string {
+    if (timeUnit === 'tag') { const [y, m, d] = p.split('-'); return `${d}.${m}`; }
+    if (timeUnit === 'woche') { const [, k] = p.split('-'); return `KW${k}`; }
+    if (timeUnit === 'monat') { const [, m] = p.split('-'); return m; }
+    return p;
+  }
+
   // ── KPIs ──
   let totalUmsatz = $derived(data.reduce((s, r) => s + (Number(r.EinzelPreis) || 0) * (Number(r.Anzahl) || 0), 0));
   let totalAnzahl = $derived(data.reduce((s, r) => s + (Number(r.Anzahl) || 0), 0));
@@ -168,7 +175,7 @@
     for (const km of kwMap.values()) { for (const [name] of [...km.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4)) allTopKolls.add(name); }
     const kollColorMap = new Map<string, string>(); let ci = 0;
     for (const k of allTopKolls) { kollColorMap.set(k, COLORS[ci % COLORS.length]); ci++; }
-    return [...kwMap.entries()].sort((a, b) => Number(b[0]) - Number(a[0])).map(([kw, km]) => ({
+    return [...kwMap.entries()].sort((a, b) => periods.indexOf(b[0]) - periods.indexOf(a[0])).map(([kw, km]) => ({
       kw, kolls: [...km.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([name, umsatz]) => ({ name, umsatz, color: kollColorMap.get(name) || '#999' })),
     }));
   });
@@ -179,7 +186,7 @@
     for (const r of last30Data) { const kw = periodKey(r); const shop = r.Kasse; if (!kwShopMap.has(kw)) kwShopMap.set(kw, new Map()); const sm = kwShopMap.get(kw)!;
       const u = (Number(r.EinzelPreis) || 0) * (Number(r.Anzahl) || 0); sm.set(shop, (sm.get(shop) || 0) + u); shopTotals.set(shop, (shopTotals.get(shop) || 0) + u); }
     const topShops = [...shopTotals.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(e => e[0]);
-    const kws = [...kwShopMap.keys()].sort((a, b) => Number(a) - Number(b));
+    const kws = [...kwShopMap.keys()].sort((a, b) => periods.indexOf(b) - periods.indexOf(a));
     return { kws, topShops, data: kws.map(kw => { const sm = kwShopMap.get(kw)!; return topShops.map(shop => sm.get(shop) || 0); }) };
   });
   function shopPolyPoints(si: number): string {
@@ -302,9 +309,7 @@
   });
 
   function mxPeriodLabel(p: string): string {
-    if (timeUnit === 'tag') return p.slice(5);
-    if (timeUnit === 'woche') return 'KW ' + p;
-    return p;
+    return periodDisplayLabel(p);
   }
 
   let mxColumns = $derived.by((): MxCol[] => {
@@ -411,7 +416,7 @@
         {/each}
         <!-- KW labels -->
         {#each shopTrend.kws as kw, ki}
-          <text x={pad.l + ki * barW + barW / 2} y={chartH - 5} text-anchor="middle" fill="var(--warm-500)" font-size="9">KW{kw}</text>
+          <text x={pad.l + ki * barW + barW / 2} y={chartH - 5} text-anchor="middle" fill="var(--warm-500)" font-size="9">{periodDisplayLabel(kw)}</text>
         {/each}
 
         {#if shopChartMode === 'line'}
@@ -602,7 +607,7 @@
     <div class="overflow-x-auto"><div class="flex gap-3" style="min-width: max-content;">
       {#each kwTopKolls as kwData}
         <div class="flex-shrink-0 w-36">
-          <p class="text-[10px] font-semibold mb-2 text-center" style="color: var(--warm-500);">KW {kwData.kw}</p>
+          <p class="text-[10px] font-semibold mb-2 text-center" style="color: var(--warm-500);">{periodDisplayLabel(kwData.kw)}</p>
           <div class="space-y-1.5">
             {#each kwData.kolls as koll}
               <div class="rounded-lg px-2.5 py-1.5" style="background: {koll.color}15; border-left: 3px solid {koll.color};">

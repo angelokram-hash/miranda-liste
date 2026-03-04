@@ -670,7 +670,7 @@
         {:else if activeTab === 'area'}
       <div class="max-w-6xl mx-auto px-5 pb-10">
         <div class="rounded-2xl p-5" style="background: white; border: 1px solid var(--warm-200); box-shadow: 0 4px 20px rgba(0,0,0,0.03);">
-          <AreaChart data={filteredData} />
+          <AreaChart data={allData} {timeUnit} {currentPeriod} {periods} />
         </div>
       </div>
     {:else if activeTab === 'artikel'}

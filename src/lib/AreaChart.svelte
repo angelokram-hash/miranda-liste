@@ -4,9 +4,15 @@
   interface RawRow {
     Kollektion: string; BildId: string; Anzahl: number; EinzelPreis: number;
     Form: string; Kasse: string; Art: string; Nr: string; KW: string; Monat: string;
+    Datum: string;
   }
 
-  let { data = [] }: { data: RawRow[] } = $props();
+  type TimeUnit = 'tag' | 'woche' | 'monat' | 'jahr';
+
+  let { data = [], timeUnit = 'woche' as TimeUnit, currentPeriod = '', periods = [] as string[] }:
+    { data: RawRow[]; timeUnit?: TimeUnit; currentPeriod?: string; periods?: string[] } = $props();
+
+  const MIN_PERIODS = 10;
 
   type ValueField = 'Kollektion' | 'Artikel' | 'Art' | 'Preisgruppe' | 'Kasse';
   type YMode = 'umsatz' | 'anzahl';
@@ -53,23 +59,48 @@
     return `https://konplott-cdn.com/mytism/image/${bildId}/${bildId}.jpg?width=${size}&height=${size}&box=true`;
   }
 
+  // Determine which periods to show (last MIN_PERIODS ending at currentPeriod)
+  function periodKeyForRow(r: RawRow): string {
+    if (timeUnit === 'tag') return r.Datum;
+    const y = (r.Datum || '').slice(0, 4);
+    if (timeUnit === 'woche') return `${y}-${r.KW}`;
+    if (timeUnit === 'monat') return `${y}-${(r as any).Monat}`;
+    return y;
+  }
+
+  function periodLabel(p: string): string {
+    if (timeUnit === 'tag') { const [y, m, d] = p.split('-'); return `${d}.${m}`; }
+    if (timeUnit === 'woche') { const [y, k] = p.split('-'); return `KW${k}`; }
+    if (timeUnit === 'monat') { const [y, m] = p.split('-'); return m; }
+    return p;
+  }
+
+  let visiblePeriods = $derived.by((): string[] => {
+    if (!periods.length || !currentPeriod) return [];
+    const ci = periods.indexOf(currentPeriod);
+    if (ci < 0) return periods.slice(-MIN_PERIODS);
+    const start = Math.max(0, ci - MIN_PERIODS + 1);
+    return periods.slice(start, ci + 1);
+  });
+
   // Build chart data
   let chartData = $derived.by(() => {
-    if (!data.length) return { kws: [] as string[], series: [] as { cat: string; values: number[]; total: number; bildId: string }[], maxY: 0 };
+    if (!data.length || !visiblePeriods.length) return { kws: [] as string[], series: [] as { cat: string; values: number[]; total: number; bildId: string }[], maxY: 0 };
 
-    // Collect all KWs
-    const kwSet = new Set<string>();
-    for (const r of data) kwSet.add(r.KW);
-    const kws = [...kwSet].sort((a, b) => Number(a) - Number(b));
+    const kws = visiblePeriods;
+    const kwSet = new Set(kws);
 
-    // Aggregate: cat -> kw -> value
+    // Filter data to visible periods
+    const visData = data.filter(r => kwSet.has(periodKeyForRow(r)));
+
+    // Aggregate: cat -> period -> value
     const catKwMap = new Map<string, Map<string, number>>();
     const catBild = new Map<string, string>();
-    for (const r of data) {
+    for (const r of visData) {
       const cat = getFieldVal(r, valueField);
-      const kw = r.KW;
+      const pk = periodKeyForRow(r);
       if (!catKwMap.has(cat)) catKwMap.set(cat, new Map());
-      catKwMap.get(cat)!.set(kw, (catKwMap.get(cat)!.get(kw) || 0) + getRowVal(r));
+      catKwMap.get(cat)!.set(pk, (catKwMap.get(cat)!.get(pk) || 0) + getRowVal(r));
       if (valueField === 'Artikel' && !catBild.has(cat)) catBild.set(cat, String(r.BildId));
     }
 
@@ -242,7 +273,7 @@
       {#each chartData.kws as kw, ki}
         {@const x = xPos(ki)}
         <line x1={x} x2={x} y1={MARGIN.top} y2={MARGIN.top + chartH} stroke="var(--warm-100)" stroke-width="0.5" />
-        <text x={x} y={MARGIN.top + chartH + 20} text-anchor="middle" fill="var(--warm-500)" font-size="10" font-weight="500">KW{kw}</text>
+        <text x={x} y={MARGIN.top + chartH + 20} text-anchor="middle" fill="var(--warm-500)" font-size="10" font-weight="500">{periodLabel(kw)}</text>
       {/each}
 
       <!-- Area paths (render bottom to top = last series first for correct layering) -->
@@ -294,7 +325,7 @@
         <text x={tx + 10} y={ty + 16} fill="white" font-size="10" font-weight="600">
           {hoveredPoint.cat === 'Sonstige' ? 'Sonstige' : hoveredPoint.cat.length > 20 ? hoveredPoint.cat.slice(0, 18) + '\u2026' : hoveredPoint.cat}
         </text>
-        <text x={tx + 10} y={ty + 32} fill="var(--warm-300)" font-size="9">KW {hoveredPoint.kw}</text>
+        <text x={tx + 10} y={ty + 32} fill="var(--warm-300)" font-size="9">{periodLabel(hoveredPoint.kw)}</text>
         <text x={tx + 10} y={ty + 46} fill="var(--warm-300)" font-size="9">{fmtVal(hoveredPoint.value)} ({hoveredPoint.pct.toFixed(1)}%)</text>
       {/if}
     </svg>
