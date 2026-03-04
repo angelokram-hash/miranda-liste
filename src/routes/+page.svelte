@@ -9,8 +9,8 @@
   // ─── Types ───
   interface RawRow {
     Kollektion: string; BildId: string; Anzahl: number; EinzelPreis: number;
-    Umsatz: number; Art: string; Form: string; FormPfad: string; Nr: string; SubKollektion: string;
-    Kasse: string; Monat: string; KW: string; Wochentag: string; Datum: string;
+    Art: string; Form: string; FormPfad: string; Nr: string; SubKollektion: string;
+    Kasse: string; Monat: string; KW: string; Datum: string;
   }
 
   interface KasseStat { kasse: string; anzahl: number; }
@@ -142,12 +142,12 @@
 
   let filteredData = $derived.by(() => {
     if (!allData.length || !currentPeriod) return allData;
-    return allData.filter(r => periodFilter(r, currentPeriod));
+    return getRowsForPeriod(currentPeriod);
   });
 
   let compareData = $derived.by(() => {
     if (!allData.length || !comparePeriod) return [];
-    return allData.filter(r => periodFilter(r, comparePeriod));
+    return getRowsForPeriod(comparePeriod);
   });
 
   // Comparison lookup: key → { umsatz, anzahl } for L1 groups
@@ -166,34 +166,44 @@
     return Array.from(map.entries()).map(([n, rr]) => buildGroup(n, rr, total, subFields)).sort((a, b) => b.umsatz - a.umsatz);
   }
 
+  // ─── Lazy per-tab aggregation (only compute what's visible) ───
+  let totalUmsatz = $derived(filteredData.reduce((s, r) => s + (Number(r.EinzelPreis) || 0) * (Number(r.Anzahl) || 0), 0));
+  let totalAnzahl = $derived(filteredData.reduce((s, r) => s + (Number(r.Anzahl) || 0), 0));
+
+  // Cache: only recompute when period changes, not when tab changes
+  let _aggCache = $state<{ period: string; field: string; result: GroupNode[] } | null>(null);
+  function lazyGroupBy(field: string, subFields?: string[]): GroupNode[] {
+    if (_aggCache && _aggCache.period === currentPeriod && _aggCache.field === field) return _aggCache.result;
+    const result = groupByField(filteredData, field, totalUmsatz, subFields);
+    _aggCache = { period: currentPeriod, field, result };
+    return result;
+  }
+
+  // Legacy compat: agg object for Dashboard & other uses
   let agg = $derived.by(() => {
-    const rows = filteredData;
-    if (!rows.length) return null;
-    let total = 0;
-    for (const r of rows) total += (Number(r.EinzelPreis) || 0) * (Number(r.Anzahl) || 0);
-    const totalAnzahl = rows.reduce((s, r) => s + (Number(r.Anzahl) || 0), 0);
-
-    const kollArtikel = groupByField(rows, 'Kollektion', total);
-    const kollSub = groupByField(rows, 'Kollektion', total, ['SubKollektion']);
-    const form = groupByField(rows, 'Form', total, ['Kollektion']);
-    const art = groupByField(rows, 'Art', total, ['Kollektion']);
-    const formpfad = groupByField(rows, 'FormPfad', total, ['Form', 'Kollektion']);
-    const kasse = groupByField(rows, 'Kasse', total, ['Kollektion']);
-
-    const preisRanges = ['0 – 20 €', '20 – 50 €', '50 – 120 €', '120 – 250 €', 'über 250 €'];
-    const byPreis = new Map<string, RawRow[]>();
-    for (const r of rows) { const pg = (r as any).Preisgruppe; if (!byPreis.has(pg)) byPreis.set(pg, []); byPreis.get(pg)!.push(r); }
-    const preisFP = preisRanges.filter(p => byPreis.has(p)).map(p => buildGroup(p, byPreis.get(p)!, total, ['Form', 'Kollektion']));
-    const preisKoll = preisRanges.filter(p => byPreis.has(p)).map(p => buildGroup(p, byPreis.get(p)!, total, ['Kollektion']));
-
-    return { total, totalAnzahl, kollArtikel, kollSub, form, art, formpfad, kasse, preisFP, preisKoll };
+    if (!filteredData.length) return null;
+    return { total: totalUmsatz, totalAnzahl };
   });
-
-  let totalUmsatz = $derived(agg?.total ?? 0);
-  let totalAnzahl = $derived(agg?.totalAnzahl ?? 0);
 
   let compTotalUmsatz = $derived(compareData.reduce((s, r) => s + (Number(r.EinzelPreis) || 0) * (Number(r.Anzahl) || 0), 0));
   let compTotalAnzahl = $derived(compareData.reduce((s, r) => s + (Number(r.Anzahl) || 0), 0));
+
+  // Pre-filtered data for AreaChart (only last 10 visible periods instead of all 167k)
+  let areaChartData = $derived.by(() => {
+    if (!allData.length || !currentPeriod || !periods.length) return [];
+    const ci = periods.indexOf(currentPeriod);
+    if (ci < 0) return [];
+    const start = Math.max(0, ci - 9);
+    const visiblePeriods = periods.slice(start, ci + 1);
+    return getRowsForPeriods(visiblePeriods);
+  });
+
+  // Pre-filtered last30 data for Dashboard (using index, not scanning 167k)
+  let last30Rows = $derived.by(() => {
+    if (!allData.length || !periods.length) return [];
+    const last30 = periods.slice(-30);
+    return getRowsForPeriods(last30);
+  });
 
   // All articles for Artikel tab
   let allArticles = $derived.by(() => {
@@ -280,7 +290,7 @@
     if (activeTab !== 'custom' || !filteredData.length || !customDim1) return [];
     const dims = [customDim1, customDim2, customDim3, customDim4].filter(d => d !== '') as string[];
     if (dims.length === 0) return [];
-    let total = agg?.total ?? 0;
+    let total = totalUmsatz;
     const byFirst = new Map<string, RawRow[]>();
     for (const r of filteredData) { const k = (r as any)[dims[0]] || '(leer)'; if (!byFirst.has(k)) byFirst.set(k, []); byFirst.get(k)!.push(r); }
     return Array.from(byFirst.entries())
@@ -288,15 +298,23 @@
       .sort((a, b) => b.umsatz - a.umsatz);
   });
 
-  let currentGroups = $derived.by(() => {
-    if (!agg) return [];
+  let currentGroups = $derived.by((): GroupNode[] => {
+    if (!filteredData.length) return [];
     switch (activeTab) {
-      case 'kollektion': return kollSubMode === 'subkollektion' ? agg.kollSub : agg.kollArtikel;
-      case 'form': return agg.form;
-      case 'art': return agg.art;
-      case 'formpfad': return agg.formpfad;
-      case 'preis': return preisSubTab === 'kollektion' ? agg.preisKoll : agg.preisFP;
-      case 'kasse': return agg.kasse;
+      case 'kollektion': return kollSubMode === 'subkollektion'
+        ? groupByField(filteredData, 'Kollektion', totalUmsatz, ['SubKollektion'])
+        : groupByField(filteredData, 'Kollektion', totalUmsatz);
+      case 'form': return groupByField(filteredData, 'Form', totalUmsatz, ['Kollektion']);
+      case 'art': return groupByField(filteredData, 'Art', totalUmsatz, ['Kollektion']);
+      case 'formpfad': return groupByField(filteredData, 'FormPfad', totalUmsatz, ['Form', 'Kollektion']);
+      case 'kasse': return groupByField(filteredData, 'Kasse', totalUmsatz, ['Kollektion']);
+      case 'preis': {
+        const preisRanges = ['0 – 20 €', '20 – 50 €', '50 – 120 €', '120 – 250 €', 'über 250 €'];
+        const byPreis = new Map<string, RawRow[]>();
+        for (const r of filteredData) { const pg = (r as any).Preisgruppe; if (!byPreis.has(pg)) byPreis.set(pg, []); byPreis.get(pg)!.push(r); }
+        const sub = preisSubTab === 'kollektion' ? ['Kollektion'] : ['Form', 'Kollektion'];
+        return preisRanges.filter(p => byPreis.has(p)).map(p => buildGroup(p, byPreis.get(p)!, totalUmsatz, sub));
+      }
       case 'custom': return customGroups;
       default: return [];
     }
@@ -398,28 +416,102 @@
     return 'über 250 €';
   }
 
+  // ─── Period indices (built once at load, used for O(1) filtering) ───
+  let weekIdx = $state(new Map<string, number[]>());
+  let monthIdx = $state(new Map<string, number[]>());
+  let dayIdx = $state(new Map<string, number[]>());
+  let yearIdx = $state(new Map<string, number[]>());
+
+  function getRowsForPeriod(period: string): RawRow[] {
+    const idx = timeUnit === 'woche' ? weekIdx : timeUnit === 'monat' ? monthIdx : timeUnit === 'tag' ? dayIdx : yearIdx;
+    return (idx.get(period) || []).map(i => allData[i]);
+  }
+
+  function getRowsForPeriods(periodList: string[]): RawRow[] {
+    const idx = timeUnit === 'woche' ? weekIdx : timeUnit === 'monat' ? monthIdx : timeUnit === 'tag' ? dayIdx : yearIdx;
+    const result: RawRow[] = [];
+    for (const p of periodList) {
+      const indices = idx.get(p);
+      if (indices) for (const i of indices) result.push(allData[i]);
+    }
+    return result;
+  }
+
   onMount(async () => {
     const res = await fetch('/data.json');
-    allData = await res.json();
+    const raw = await res.json();
 
-    // Add computed fields to each row for uniform buildGroup access
-    for (const r of allData) {
-      (r as any).FormPfad = (r as any).FormPfad || ((r.Form || '').trim().split(/\s+/)[0]) || '(leer)';
-      (r as any).Preisgruppe = getPreisgruppe(Number(r.EinzelPreis) || 0);
-      (r as any).Jahr = (r as any).Datum ? (r as any).Datum.slice(0, 4) : '2025';
+    // Decode dictionary-encoded format
+    const { d, r: rows } = raw;
+    const decoded: RawRow[] = new Array(rows.length);
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      decoded[i] = {
+        Kasse: d.K[row[0]],
+        Kollektion: d.L[row[1]],
+        SubKollektion: d.S[row[2]],
+        Art: d.A[row[3]],
+        Nr: d.N[row[4]],
+        Form: d.F[row[5]],
+        FormPfad: d.P[row[6]],
+        BildId: row[7],
+        Anzahl: row[8],
+        EinzelPreis: row[9],
+        Monat: row[10],
+        KW: row[11],
+        Datum: row[12],
+      } as RawRow;
     }
 
+    // Add computed fields
+    for (const r of decoded) {
+      (r as any).Preisgruppe = getPreisgruppe(Number(r.EinzelPreis) || 0);
+      (r as any).Jahr = r.Datum ? r.Datum.slice(0, 4) : '2025';
+    }
+
+    allData = decoded;
+
+    // Build period indices for O(1) lookup
+    const _wk = new Map<string, number[]>();
+    const _mo = new Map<string, number[]>();
+    const _dy = new Map<string, number[]>();
+    const _yr = new Map<string, number[]>();
+
+    for (let i = 0; i < allData.length; i++) {
+      const r = allData[i];
+      const y = (r as any).Jahr;
+
+      const wKey = `${y}-${r.KW}`;
+      if (!_wk.has(wKey)) _wk.set(wKey, []);
+      _wk.get(wKey)!.push(i);
+
+      const mKey = `${y}-${r.Monat}`;
+      if (!_mo.has(mKey)) _mo.set(mKey, []);
+      _mo.get(mKey)!.push(i);
+
+      if (!_dy.has(r.Datum)) _dy.set(r.Datum, []);
+      _dy.get(r.Datum)!.push(i);
+
+      if (!_yr.has(y)) _yr.set(y, []);
+      _yr.get(y)!.push(i);
+    }
+
+    weekIdx = _wk;
+    monthIdx = _mo;
+    dayIdx = _dy;
+    yearIdx = _yr;
+
     // Populate filter options (year-scoped for months & KWs)
-    availableYears = [...new Set(allData.map(r => (r as any).Jahr as string))].sort();
-    availableMonths = [...new Set(allData.map(r => `${(r as any).Jahr}-${r.Monat}`))].sort((a, b) => {
+    availableYears = [..._yr.keys()].sort();
+    availableMonths = [..._mo.keys()].sort((a, b) => {
       const [ya, ma] = a.split('-'), [yb, mb] = b.split('-');
       return ya !== yb ? ya.localeCompare(yb) : MONAT_ORDER.indexOf(ma) - MONAT_ORDER.indexOf(mb);
     });
-    availableKWs = [...new Set(allData.map(r => `${(r as any).Jahr}-${r.KW}`))].sort((a, b) => {
+    availableKWs = [..._wk.keys()].sort((a, b) => {
       const [ya, ka] = a.split('-'), [yb, kb] = b.split('-');
       return ya !== yb ? ya.localeCompare(yb) : Number(ka) - Number(kb);
     });
-    availableDates = [...new Set(allData.map(r => r.Datum))].sort();
+    availableDates = [..._dy.keys()].sort();
 
     // Default: current KW in current year
     const now = new Date();
@@ -428,11 +520,11 @@
     const currentKW = String(Math.ceil(((now.getTime() - oneJan.getTime()) / 86400000 + oneJan.getDay() + 1) / 7)).padStart(2, '0');
     const currentYearKW = `${currentYear}-${currentKW}`;
     timeUnit = 'woche';
-    const kwIdx = availableKWs.indexOf(currentYearKW);
-    if (kwIdx >= 0) {
-      timeIdx = availableKWs.length - 1 - kwIdx;
+    const kwI = availableKWs.indexOf(currentYearKW);
+    if (kwI >= 0) {
+      timeIdx = availableKWs.length - 1 - kwI;
     } else {
-      timeIdx = 0; // fallback to latest
+      timeIdx = 0;
     }
 
     loading = false;
@@ -646,7 +738,7 @@
     <!-- Table / Charts -->
     {#if activeTab === 'dashboard'}
       <div class="max-w-6xl mx-auto px-5 pb-10">
-        <Dashboard data={filteredData} compareData={compareData} {allData} {timeUnit} {periods}
+        <Dashboard data={filteredData} compareData={compareData} allData={last30Rows} {timeUnit} {periods}
           currentLabel={currentPeriodLabel} compareLabel={comparePeriodLabel} />
       </div>
     {:else if activeTab === 'bubble'}
@@ -670,7 +762,7 @@
         {:else if activeTab === 'area'}
       <div class="max-w-6xl mx-auto px-5 pb-10">
         <div class="rounded-2xl p-5" style="background: white; border: 1px solid var(--warm-200); box-shadow: 0 4px 20px rgba(0,0,0,0.03);">
-          <AreaChart data={allData} {timeUnit} {currentPeriod} {periods} />
+          <AreaChart data={areaChartData} {timeUnit} {currentPeriod} {periods} />
         </div>
       </div>
     {:else if activeTab === 'artikel'}

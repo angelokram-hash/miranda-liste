@@ -150,12 +150,9 @@
     }).sort((a, b) => b.totalUmsatz - a.totalUmsatz).filter(t => t.totalUmsatz > 0);
   });
 
-  // Last 30 periods from allData
+  // allData is now pre-filtered to last 30 periods by parent
   let last30Periods = $derived(periods.slice(-30));
-  let last30Data = $derived(allData.filter(r => {
-    const s = new Set(last30Periods);
-    return s.has(periodKey(r));
-  }));
+  let last30Data = $derived(allData);
 
   // Top 4 Kolls pro KW (last 30 KWs)
   let kwSelectedTypes = $state<Set<string>>(new Set());

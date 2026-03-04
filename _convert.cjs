@@ -1,6 +1,15 @@
 /**
  * Convert "SHop ab 2025" CSV (semicolon-delimited, ISO-8859) → data.json
- * Replaces existing data.json with new 2025+ data
+ * v2: Dictionary-encoded compact format for performance
+ *
+ * Output format:
+ * {
+ *   "d": { "K": [...], "L": [...], ... },   // dictionaries for string fields
+ *   "r": [ [idx, idx, ...], ... ]             // rows as arrays with dict indices
+ * }
+ *
+ * Row layout: [Kasse, Kollektion, SubKollektion, Art, Nr, Form, FormPfad, BildId, Anzahl, EinzelPreis, Monat, KW, Datum]
+ *             [  0       1            2          3    4    5       6        7       8         9        10    11    12  ]
  */
 const fs = require('fs');
 const path = require('path');
@@ -20,12 +29,30 @@ const MONAT_MAP = {
   '09': 'Sep', '10': 'Okt', '11': 'Nov', '12': 'Dez'
 };
 
-const results = [];
+// Dictionary builders
+const dicts = {
+  K: new Map(),  // Kasse
+  L: new Map(),  // Kollektion
+  S: new Map(),  // SubKollektion
+  A: new Map(),  // Art
+  N: new Map(),  // Nr
+  F: new Map(),  // Form
+  P: new Map(),  // FormPfad
+};
+
+function dictIdx(dict, val) {
+  const v = val || '';
+  if (dict.has(v)) return dict.get(v);
+  const idx = dict.size;
+  dict.set(v, idx);
+  return idx;
+}
+
+const rows = [];
 let errors = 0;
 
 for (let i = 0; i < lines.length; i++) {
   const line = lines[i];
-  // Parse semicolon-separated, quoted fields
   const cols = line.split(';').map(c => c.replace(/^"|"$/g, '').trim());
 
   if (cols.length < 29) {
@@ -40,47 +67,72 @@ for (let i = 0; i < lines.length; i++) {
     ? `${dateParts[2]}-${dateParts[1]}-${dateParts[0]}`
     : '';
 
-  // Parse numeric values (German: comma as decimal separator)
   const parseNum = (s) => {
     const n = parseFloat((s || '0').replace(',', '.'));
     return isNaN(n) ? 0 : Math.round(n * 100) / 100;
   };
 
-  const row = {
-    Kasse: cols[1],
-    Kollektion: cols[3],
-    SubKollektion: cols[5],
-    Art: cols[6],
-    Nr: cols[7],
-    Form: cols[8],
-    FormPfad: cols[2],
-    Preisgruppe: cols[9],
-    BildId: cols[10],
-    Anzahl: parseInt(cols[11]) || 0,
-    EinzelPreis: parseNum(cols[12]),
-    GesamtPreis: parseNum(cols[13]),
-    Umsatz: parseNum(cols[18]),
-    PreisOberGruppe: cols[14],
-    Monat: MONAT_MAP[cols[26]] || cols[25] || '',
-    Wochentag: cols[24],
-    KW: cols[23].padStart(2, '0'),
-    Datum: datum,
-    TRLUXREST: cols[17]
-  };
+  const monat = MONAT_MAP[cols[26]] || cols[25] || '';
+  const kw = cols[23].padStart(2, '0');
+  const anzahl = parseInt(cols[11]) || 0;
+  const einzelPreis = parseNum(cols[12]);
 
-  results.push(row);
+  // Row: [Kasse, Kollektion, SubKollektion, Art, Nr, Form, FormPfad, BildId, Anzahl, EinzelPreis, Monat, KW, Datum]
+  rows.push([
+    dictIdx(dicts.K, cols[1]),         // 0: Kasse
+    dictIdx(dicts.L, cols[3]),         // 1: Kollektion
+    dictIdx(dicts.S, cols[5]),         // 2: SubKollektion
+    dictIdx(dicts.A, cols[6]),         // 3: Art
+    dictIdx(dicts.N, cols[7]),         // 4: Nr
+    dictIdx(dicts.F, cols[8]),         // 5: Form
+    dictIdx(dicts.P, cols[2]),         // 6: FormPfad
+    cols[10],                          // 7: BildId (string, unique per article)
+    anzahl,                            // 8: Anzahl
+    einzelPreis,                       // 9: EinzelPreis
+    monat,                             // 10: Monat (only 12 values, not worth dict)
+    kw,                                // 11: KW (only ~52 values)
+    datum,                             // 12: Datum
+  ]);
 }
 
-console.log(`Converted ${results.length} records (${errors} errors)`);
-console.log('Sample:', JSON.stringify(results[0], null, 2));
+console.log(`Converted ${rows.length} records (${errors} errors)`);
 
-// Verify some stats
-const years = [...new Set(results.map(r => r.Datum.slice(0, 4)))];
-const kassen = [...new Set(results.map(r => r.Kasse))];
+// Build output dictionaries (Map → Array)
+const dictArrays = {};
+for (const [key, map] of Object.entries(dicts)) {
+  const arr = new Array(map.size);
+  for (const [val, idx] of map) arr[idx] = val;
+  dictArrays[key] = arr;
+  console.log(`Dict ${key}: ${arr.length} entries`);
+}
+
+// Verify sample
+const sample = rows[0];
+console.log('Sample row:', JSON.stringify(sample));
+console.log('Decoded:', {
+  Kasse: dictArrays.K[sample[0]],
+  Kollektion: dictArrays.L[sample[1]],
+  Art: dictArrays.A[sample[3]],
+  Datum: sample[12],
+});
+
+// Stats
+const years = [...new Set(rows.map(r => r[12].slice(0, 4)))];
 console.log('Years:', years.sort());
-console.log('Kassen:', kassen.sort());
+console.log('Kassen:', dictArrays.K.sort ? dictArrays.K.slice().sort() : dictArrays.K);
 
 // Write output
-fs.writeFileSync(DST, JSON.stringify(results));
-const sizeMB = (fs.statSync(DST).size / 1024 / 1024).toFixed(1);
-console.log(`\nWritten to ${DST} (${sizeMB} MB, ${results.length} records)`);
+const output = { d: dictArrays, r: rows };
+const json = JSON.stringify(output);
+fs.writeFileSync(DST, json);
+const sizeMB = (fs.statSync(DST).size / 1024 / 1024).toFixed(2);
+console.log(`\nWritten to ${DST} (${sizeMB} MB, ${rows.length} records)`);
+
+// Compare with old size
+console.log(`\nCompression estimate:`);
+const zlib = require('zlib');
+const gzSize = (zlib.gzipSync(json).length / 1024 / 1024).toFixed(2);
+const brSize = (zlib.brotliCompressSync(json).length / 1024 / 1024).toFixed(2);
+console.log(`  Raw: ${sizeMB} MB`);
+console.log(`  Gzip: ${gzSize} MB`);
+console.log(`  Brotli: ${brSize} MB`);
