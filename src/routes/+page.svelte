@@ -965,7 +965,13 @@
     {#if activeTab === 'dashboard'}
       <div class="max-w-6xl mx-auto px-5 pb-10">
         <Dashboard data={filteredData} compareData={compareData} allData={last30Rows} {timeUnit} {periods}
-          currentLabel={currentPeriodLabel} compareLabel={comparePeriodLabel} />
+          currentLabel={currentPeriodLabel} compareLabel={comparePeriodLabel}
+          pickedNrs={new Set(activeItems.keys())} onTogglePick={(art) => {
+            const m = new Map(activeItems);
+            if (m.has(art.nr)) { m.delete(art.nr); }
+            else { m.set(art.nr, { nr: art.nr, bildId: art.bildId, kollektion: art.kollektion, einzelPreis: art.einzelPreis }); }
+            activeItems = m;
+          }} />
       </div>
     {:else if activeTab === 'bubble'}
       <div class="max-w-6xl mx-auto px-5 pb-10">
