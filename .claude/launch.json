@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "miranda-liste-dev",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd D:/GITHUB/miranda-liste && npx vite dev --port 5180 --host"],
+      "port": 5180
+    }
+  ]
+}
