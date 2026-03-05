@@ -29,6 +29,16 @@ const MONAT_MAP = {
   '09': 'Sep', '10': 'Okt', '11': 'Nov', '12': 'Dez'
 };
 
+// ISO week number calculation
+function getISOWeek(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  date.setHours(0, 0, 0, 0);
+  date.setDate(date.getDate() + 3 - ((date.getDay() + 6) % 7));
+  const week1 = new Date(date.getFullYear(), 0, 4);
+  return String(1 + Math.round(((date - week1) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7)).padStart(2, '0');
+}
+
 // Dictionary builders
 const dicts = {
   K: new Map(),  // Kasse
@@ -55,7 +65,7 @@ for (let i = 0; i < lines.length; i++) {
   const line = lines[i];
   const cols = line.split(';').map(c => c.replace(/^"|"$/g, '').trim());
 
-  if (cols.length < 29) {
+  if (cols.length < 17) {
     errors++;
     if (errors <= 5) console.log(`Line ${i + 1}: only ${cols.length} cols, skipping`);
     continue;
@@ -72,21 +82,39 @@ for (let i = 0; i < lines.length; i++) {
     return isNaN(n) ? 0 : Math.round(n * 100) / 100;
   };
 
-  const monat = MONAT_MAP[cols[26]] || cols[25] || '';
-  const kw = cols[23].padStart(2, '0');
-  const anzahl = parseInt(cols[11]) || 0;
-  const einzelPreis = parseNum(cols[12]);
+  let kasse, kollektion, subKollektion, art, nr, form, formPfad, bildId, anzahl, einzelPreis, monat, kw;
+
+  if (cols.length >= 29) {
+    // Old 29+ column format
+    monat = MONAT_MAP[cols[26]] || cols[25] || '';
+    kw = cols[23].padStart(2, '0');
+    anzahl = parseInt(cols[11]) || 0;
+    einzelPreis = parseNum(cols[12]);
+    kasse = cols[1]; kollektion = cols[3]; subKollektion = cols[5];
+    art = cols[6]; nr = cols[7]; form = cols[8]; formPfad = cols[2];
+    bildId = cols[10];
+  } else {
+    // New 17 column format — KW and Monat derived from Datum
+    const mm = datum ? datum.split('-')[1] : '';
+    monat = MONAT_MAP[mm] || '';
+    kw = datum ? getISOWeek(datum) : '00';
+    anzahl = parseInt(cols[12]) || 0;
+    einzelPreis = parseNum(cols[13]);
+    kasse = cols[1]; kollektion = cols[3]; subKollektion = cols[4];
+    art = cols[5]; nr = cols[10]; form = cols[9]; formPfad = cols[2];
+    bildId = cols[11];
+  }
 
   // Row: [Kasse, Kollektion, SubKollektion, Art, Nr, Form, FormPfad, BildId, Anzahl, EinzelPreis, Monat, KW, Datum]
   rows.push([
-    dictIdx(dicts.K, cols[1]),         // 0: Kasse
-    dictIdx(dicts.L, cols[3]),         // 1: Kollektion
-    dictIdx(dicts.S, cols[5]),         // 2: SubKollektion
-    dictIdx(dicts.A, cols[6]),         // 3: Art
-    dictIdx(dicts.N, cols[7]),         // 4: Nr
-    dictIdx(dicts.F, cols[8]),         // 5: Form
-    dictIdx(dicts.P, cols[2]),         // 6: FormPfad
-    cols[10],                          // 7: BildId (string, unique per article)
+    dictIdx(dicts.K, kasse),           // 0: Kasse
+    dictIdx(dicts.L, kollektion),      // 1: Kollektion
+    dictIdx(dicts.S, subKollektion),   // 2: SubKollektion
+    dictIdx(dicts.A, art),             // 3: Art
+    dictIdx(dicts.N, nr),              // 4: Nr
+    dictIdx(dicts.F, form),            // 5: Form
+    dictIdx(dicts.P, formPfad),        // 6: FormPfad
+    bildId,                            // 7: BildId (string, unique per article)
     anzahl,                            // 8: Anzahl
     einzelPreis,                       // 9: EinzelPreis
     monat,                             // 10: Monat (only 12 values, not worth dict)

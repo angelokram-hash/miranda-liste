@@ -27,6 +27,16 @@ const MONAT_MAP = {
   '09': 'Sep', '10': 'Okt', '11': 'Nov', '12': 'Dez'
 };
 
+// ISO week number calculation
+function getISOWeek(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  date.setHours(0, 0, 0, 0);
+  date.setDate(date.getDate() + 3 - ((date.getDay() + 6) % 7));
+  const week1 = new Date(date.getFullYear(), 0, 4);
+  return String(1 + Math.round(((date - week1) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7)).padStart(2, '0');
+}
+
 // --- Parse CLI args ---
 const args = process.argv.slice(2);
 let srcFile = DEFAULT_SRC;
@@ -50,6 +60,11 @@ function ask(question, defaultAnswer) {
 }
 
 // --- Helper: parse a CSV line into a row array ---
+// Supports two formats:
+//   Old (29+ cols): indices as documented in _convert.cjs
+//   New (17 cols):  [0]=Datum [1]=Kasse [2]=FormPfad [3]=Kollektion [4]=SubKollektion
+//                   [5]=Art [6]=Nr [7]=Farbe [8]=EAN [9]=Form [10]=Code
+//                   [11]=BildId [12]=Anzahl [13]=EinzelPreis [14-16]=other
 function parseLine(cols) {
   // Parse date from col[0]: "27.09.2025 10:17:07" → "2025-09-27"
   const dateParts = cols[0].split(' ')[0].split('.');
@@ -62,26 +77,30 @@ function parseLine(cols) {
     return isNaN(n) ? 0 : Math.round(n * 100) / 100;
   };
 
-  const monat = MONAT_MAP[cols[26]] || cols[25] || '';
-  const kw = cols[23].padStart(2, '0');
-  const anzahl = parseInt(cols[11]) || 0;
-  const einzelPreis = parseNum(cols[12]);
-
-  return {
-    kasse: cols[1],
-    kollektion: cols[3],
-    subKollektion: cols[5],
-    art: cols[6],
-    nr: cols[7],
-    form: cols[8],
-    formPfad: cols[2],
-    bildId: cols[10],
-    anzahl,
-    einzelPreis,
-    monat,
-    kw,
-    datum,
-  };
+  if (cols.length >= 29) {
+    // Old 29+ column format
+    const monat = MONAT_MAP[cols[26]] || cols[25] || '';
+    const kw = cols[23].padStart(2, '0');
+    const anzahl = parseInt(cols[11]) || 0;
+    const einzelPreis = parseNum(cols[12]);
+    return {
+      kasse: cols[1], kollektion: cols[3], subKollektion: cols[5],
+      art: cols[6], nr: cols[7], form: cols[8], formPfad: cols[2],
+      bildId: cols[10], anzahl, einzelPreis, monat, kw, datum,
+    };
+  } else {
+    // New 17 column format — KW and Monat derived from Datum
+    const mm = datum ? datum.split('-')[1] : '';
+    const monat = MONAT_MAP[mm] || '';
+    const kw = datum ? getISOWeek(datum) : '00';
+    const anzahl = parseInt(cols[12]) || 0;
+    const einzelPreis = parseNum(cols[13]);
+    return {
+      kasse: cols[1], kollektion: cols[3], subKollektion: cols[4],
+      art: cols[5], nr: cols[10], form: cols[9], formPfad: cols[2],
+      bildId: cols[11], anzahl, einzelPreis, monat, kw, datum,
+    };
+  }
 }
 
 // --- Main ---
@@ -133,7 +152,7 @@ async function main() {
 
   for (let i = 0; i < lines.length; i++) {
     const cols = lines[i].split(';').map(c => c.replace(/^"|"$/g, '').trim());
-    if (cols.length < 29) {
+    if (cols.length < 17) {
       parseErrors++;
       if (parseErrors <= 3) console.log(`   ⚠️  Zeile ${i + 1}: nur ${cols.length} Spalten, übersprungen`);
       continue;
