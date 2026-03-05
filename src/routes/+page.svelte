@@ -1422,41 +1422,32 @@
           <!-- svelte-ignore a11y_click_events_have_key_events -->
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div class="absolute bottom-full left-0 mb-1 w-56 rounded-xl shadow-lg z-50 py-1.5" style="background: white; border: 1px solid var(--warm-200);" onclick={(e) => e.stopPropagation()}>
-            <!-- KOPIEREN -->
-            <p class="px-3 pb-1 pt-1 text-[8px] font-bold uppercase tracking-[0.12em]" style="color: var(--warm-400);">Kopieren</p>
             <button class="w-full text-left px-3 py-1.5 text-[10px] font-medium hover:bg-[var(--warm-50)] flex items-center gap-2" style="color: var(--warm-700);"
               onclick={() => { copyArticleNumbers(); shareMenuOpen = false; }}>
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg>
-              Inhalte kopieren
-              <span class="text-[8px] ml-auto" style="color: var(--warm-400);">Artikelnummern</span>
+              Copy Art Nr
             </button>
-            <button class="w-full text-left px-3 py-1.5 text-[10px] font-medium hover:bg-[var(--warm-50)] flex items-center gap-2" style="color: var(--warm-700);"
-              onclick={() => { copyKatalogLink(); shareMenuOpen = false; }}>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-              Link kopieren
-              <span class="text-[8px] ml-auto" style="color: var(--warm-400);">Katalog-URL</span>
-            </button>
-            <div style="border-top: 1px solid var(--warm-100);" class="my-1.5"></div>
-            <!-- TEILEN -->
-            <p class="px-3 pb-1 pt-0.5 text-[8px] font-bold uppercase tracking-[0.12em]" style="color: var(--warm-400);">Teilen</p>
             <button class="w-full text-left px-3 py-1.5 text-[10px] font-medium hover:bg-[var(--warm-50)] flex items-center gap-2" style="color: var(--warm-700);"
               onclick={() => { shareArticleNumbers(); shareMenuOpen = false; }}>
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
-              Inhalt sharen
-              <span class="text-[8px] ml-auto" style="color: var(--warm-400);">Artikelnummern</span>
+              Share Art Nr
+            </button>
+            <div style="border-top: 1px solid var(--warm-100);" class="my-1.5"></div>
+            <button class="w-full text-left px-3 py-1.5 text-[10px] font-medium hover:bg-[var(--warm-50)] flex items-center gap-2" style="color: var(--warm-700);"
+              onclick={() => { copyKatalogLink(); shareMenuOpen = false; }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+              Copy Link
             </button>
             <button class="w-full text-left px-3 py-1.5 text-[10px] font-medium hover:bg-[var(--warm-50)] flex items-center gap-2" style="color: var(--warm-700);"
               onclick={() => { shareKatalogLink(); shareMenuOpen = false; }}>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-              Link sharen
-              <span class="text-[8px] ml-auto" style="color: var(--warm-400);">Katalog-URL</span>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+              Share Link
             </button>
             <div style="border-top: 1px solid var(--warm-100);" class="my-1.5"></div>
-            <!-- ÖFFNEN -->
             <button class="w-full text-left px-3 py-1.5 text-[10px] font-medium hover:bg-[var(--warm-50)] flex items-center gap-2" style="color: var(--accent);"
               onclick={() => { openKatalog(); shareMenuOpen = false; }}>
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-              Katalog-Seite öffnen
+              Katalogansicht
             </button>
           </div>
         {/if}
