@@ -4,8 +4,9 @@
     Form: string; FormPfad: string; Kasse: string; Art: string; Nr: string; KW: string; Monat: string; Datum: string;
   }
 
-  let { data = [], compareData = [], allData = [], timeUnit = 'woche', periods = [] as string[], currentLabel = '', compareLabel = '' }: {
+  let { data = [], compareData = [], allData = [], timeUnit = 'woche', periods = [] as string[], currentLabel = '', compareLabel = '', pickedNrs = new Set<string>(), onTogglePick }: {
     data: RawRow[]; compareData: RawRow[]; allData: RawRow[]; timeUnit: string; periods: string[]; currentLabel: string; compareLabel: string;
+    pickedNrs?: Set<string>; onTogglePick?: (art: { nr: string; bildId: string; kollektion: string; einzelPreis: number }) => void;
   } = $props();
 
   function imgUrl(bid: string, sz: number): string {
@@ -343,8 +344,9 @@
         {#each (artShowAll ? topArticles : topArticles.slice(0, 10)) as art, i}
           <div class="flex-shrink-0 w-24">
             <div class="relative pt-2 pl-2">
-              <div class="w-[88px] h-[88px] rounded-xl overflow-hidden shadow-sm" style="border: 1.5px solid var(--warm-200);">
+              <div class="relative w-[88px] h-[88px] rounded-xl overflow-hidden shadow-sm" style="border: 1.5px solid var(--warm-200);">
                 <img src={imgUrl(art.bildId, 200)} alt="" class="w-full h-full object-cover" loading="lazy" onerror={(e) => { (e.currentTarget as HTMLImageElement).style.display='none'; }} />
+                {#if art.nr && onTogglePick}<button class="absolute top-0.5 right-0.5 w-5 h-5 rounded-full flex items-center justify-center text-white text-[10px] shadow-sm" style="background: {pickedNrs.has(art.nr) ? 'var(--accent)' : 'rgba(0,0,0,0.45)'};" onclick={(e) => { e.stopPropagation(); onTogglePick({ nr: art.nr, bildId: art.bildId, kollektion: art.koll, einzelPreis: art.umsatz / (art.anzahl || 1) }); }} title="Zur Liste">{pickedNrs.has(art.nr) ? '✓' : '+'}</button>{/if}
               </div>
               <div class="absolute top-0 left-0 min-w-5 h-5 px-1 rounded-full flex items-center justify-center text-[8px] font-bold" style="background: {rankBadgeColor(i + 1, art.compRank)}; color: white;">
                 {i + 1}{#if art.compRank > 0}<span class="font-normal opacity-80">({art.compRank})</span>{/if}

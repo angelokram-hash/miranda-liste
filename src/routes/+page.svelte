@@ -221,37 +221,39 @@
     if (activeListName === name) { activeListName = ''; activeItems = new Map(); }
   }
   function buildPickText(): string {
-    return Array.from(activeItems.values()).map(it => `${it.nr} — https://konplott.com/go/${it.nr}`).join('\n');
+    return Array.from(activeItems.values()).map(it => it.nr).join('\n');
   }
-  function copyPick() { navigator.clipboard.writeText(buildPickText()); }
-  function sharePickUrl() {
-    const nrs = Array.from(activeItems.keys()).join(',');
-    const name = encodeURIComponent(activeListName || 'Liste');
-    const url = `${location.origin}${location.pathname}#pick=${name}&nrs=${nrs}`;
-    if (navigator.share) { navigator.share({ title: `Pick & Share: ${activeListName || 'Liste'}`, url }); }
-    else { navigator.clipboard.writeText(url); }
-  }
-  function openKatalogForList(list: PickList) {
-    const arr = list.items;
+  function buildKatalogUrl(arr: PickItem[], name: string): string {
     const nrs = arr.map(it => it.nr).join(',');
     const bids = arr.map(it => it.bildId).join(',');
     const kolls = arr.map(it => encodeURIComponent(it.kollektion)).join(',');
     const prices = arr.map(it => it.einzelPreis).join(',');
-    const name = encodeURIComponent(list.name);
     const date = new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
-    const url = `${location.origin}/katalog#name=${name}&nrs=${nrs}&bids=${bids}&kolls=${kolls}&prices=${prices}&date=${encodeURIComponent(date)}`;
-    window.open(url, '_blank');
+    return `${location.origin}/katalog#name=${encodeURIComponent(name)}&nrs=${nrs}&bids=${bids}&kolls=${kolls}&prices=${prices}&date=${encodeURIComponent(date)}`;
+  }
+  function copyArticleNumbers() { navigator.clipboard.writeText(buildPickText()); copyFeedback = 'nrs'; setTimeout(() => copyFeedback = '', 1500); }
+  function copyKatalogLink() {
+    const url = buildKatalogUrl(Array.from(activeItems.values()), activeListName || 'Katalog');
+    navigator.clipboard.writeText(url);
+    copyFeedback = 'link'; setTimeout(() => copyFeedback = '', 1500);
+  }
+  function shareArticleNumbers() {
+    const text = buildPickText();
+    if (navigator.share) { navigator.share({ title: `${activeListName || 'Liste'} — Artikelnummern`, text }); }
+    else { navigator.clipboard.writeText(text); copyFeedback = 'nrs'; setTimeout(() => copyFeedback = '', 1500); }
+  }
+  function shareKatalogLink() {
+    const url = buildKatalogUrl(Array.from(activeItems.values()), activeListName || 'Katalog');
+    if (navigator.share) { navigator.share({ title: `Konplott — ${activeListName || 'Katalog'}`, url }); }
+    else { navigator.clipboard.writeText(url); copyFeedback = 'link'; setTimeout(() => copyFeedback = '', 1500); }
+  }
+  let copyFeedback = $state<'' | 'nrs' | 'link'>('');
+  let shareMenuOpen = $state(false);
+  function openKatalogForList(list: PickList) {
+    window.open(buildKatalogUrl(list.items, list.name), '_blank');
   }
   function openKatalog() {
-    const arr = Array.from(activeItems.values());
-    const nrs = arr.map(it => it.nr).join(',');
-    const bids = arr.map(it => it.bildId).join(',');
-    const kolls = arr.map(it => encodeURIComponent(it.kollektion)).join(',');
-    const prices = arr.map(it => it.einzelPreis).join(',');
-    const name = encodeURIComponent(activeListName || 'Katalog');
-    const date = new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
-    const url = `${location.origin}/katalog#name=${name}&nrs=${nrs}&bids=${bids}&kolls=${kolls}&prices=${prices}&date=${encodeURIComponent(date)}`;
-    window.open(url, '_blank');
+    window.open(buildKatalogUrl(Array.from(activeItems.values()), activeListName || 'Katalog'), '_blank');
   }
 
   // ─── Derived: filtered data ───
@@ -968,7 +970,13 @@
     {#if activeTab === 'dashboard'}
       <div class="max-w-6xl mx-auto px-5 pb-10">
         <Dashboard data={filteredData} compareData={compareData} allData={last30Rows} {timeUnit} {periods}
-          currentLabel={currentPeriodLabel} compareLabel={comparePeriodLabel} />
+          currentLabel={currentPeriodLabel} compareLabel={comparePeriodLabel}
+          pickedNrs={new Set(activeItems.keys())} onTogglePick={(art) => {
+            const m = new Map(activeItems);
+            if (m.has(art.nr)) { m.delete(art.nr); }
+            else { m.set(art.nr, { nr: art.nr, bildId: art.bildId, kollektion: art.kollektion, einzelPreis: art.einzelPreis }); }
+            activeItems = m;
+          }} />
       </div>
     {:else if activeTab === 'bubble'}
       <div class="max-w-6xl mx-auto px-5 pb-10">
@@ -1370,7 +1378,7 @@
           <span class="ml-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold" style="background: var(--accent); color: white;">{activeItems.size}</span>
         {/if}
       </div>
-      <button class="w-7 h-7 rounded-full flex items-center justify-center text-sm" style="color: var(--warm-400);" onclick={() => pickPanelOpen = false}>✕</button>
+      <button class="w-7 h-7 rounded-full flex items-center justify-center text-sm" style="color: var(--warm-400);" onclick={() => { pickPanelOpen = false; shareMenuOpen = false; }}>✕</button>
     </div>
 
     <!-- Items list -->
@@ -1403,18 +1411,47 @@
 
     <!-- Footer actions -->
     <div class="flex items-center gap-1 px-3 py-2.5 flex-wrap" style="border-top: 1px solid var(--warm-200);">
-      <button onclick={copyPick} disabled={activeItems.size === 0}
-        class="px-2.5 py-1.5 text-[10px] font-medium rounded-lg transition-all disabled:opacity-30"
-        style="border: 1px solid var(--warm-200); color: var(--warm-600); background: white;"
-        title="In Zwischenablage kopieren">Kopieren</button>
-      <button onclick={sharePickUrl} disabled={activeItems.size === 0}
-        class="px-2.5 py-1.5 text-[10px] font-medium rounded-lg transition-all disabled:opacity-30"
-        style="border: 1px solid var(--warm-200); color: var(--warm-600); background: white;"
-        title="Als URL teilen">Teilen</button>
-      <button onclick={openKatalog} disabled={activeItems.size === 0}
-        class="px-2.5 py-1.5 text-[10px] font-medium rounded-lg transition-all disabled:opacity-30"
-        style="border: 1px solid var(--warm-200); color: var(--warm-600); background: white;"
-        title="Als Katalog-OnePager öffnen">Katalog</button>
+      <!-- Share/Copy dropdown -->
+      <div class="relative">
+        <button onclick={() => shareMenuOpen = !shareMenuOpen} disabled={activeItems.size === 0}
+          class="px-2.5 py-1.5 text-[10px] font-medium rounded-lg transition-all disabled:opacity-30 flex items-center gap-1"
+          style="border: 1px solid var(--warm-200); color: var(--warm-600); background: white;">
+          {#if copyFeedback === 'nrs'}Kopiert!{:else if copyFeedback === 'link'}Link kopiert!{:else}Teilen ▾{/if}
+        </button>
+        {#if shareMenuOpen}
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="absolute bottom-full left-0 mb-1 w-56 rounded-xl shadow-lg z-50 py-1.5" style="background: white; border: 1px solid var(--warm-200);" onclick={(e) => e.stopPropagation()}>
+            <button class="w-full text-left px-3 py-1.5 text-[10px] font-medium hover:bg-[var(--warm-50)] flex items-center gap-2" style="color: var(--warm-700);"
+              onclick={() => { copyArticleNumbers(); shareMenuOpen = false; }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg>
+              Copy Art Nr
+            </button>
+            <button class="w-full text-left px-3 py-1.5 text-[10px] font-medium hover:bg-[var(--warm-50)] flex items-center gap-2" style="color: var(--warm-700);"
+              onclick={() => { shareArticleNumbers(); shareMenuOpen = false; }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+              Share Art Nr
+            </button>
+            <div style="border-top: 1px solid var(--warm-100);" class="my-1.5"></div>
+            <button class="w-full text-left px-3 py-1.5 text-[10px] font-medium hover:bg-[var(--warm-50)] flex items-center gap-2" style="color: var(--warm-700);"
+              onclick={() => { copyKatalogLink(); shareMenuOpen = false; }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+              Copy Link
+            </button>
+            <button class="w-full text-left px-3 py-1.5 text-[10px] font-medium hover:bg-[var(--warm-50)] flex items-center gap-2" style="color: var(--warm-700);"
+              onclick={() => { shareKatalogLink(); shareMenuOpen = false; }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+              Share Link
+            </button>
+            <div style="border-top: 1px solid var(--warm-100);" class="my-1.5"></div>
+            <button class="w-full text-left px-3 py-1.5 text-[10px] font-medium hover:bg-[var(--warm-50)] flex items-center gap-2" style="color: var(--accent);"
+              onclick={() => { openKatalog(); shareMenuOpen = false; }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+              Katalogansicht
+            </button>
+          </div>
+        {/if}
+      </div>
       <button onclick={savePick} disabled={activeItems.size === 0}
         class="px-2.5 py-1.5 text-[10px] font-medium rounded-lg transition-all disabled:opacity-30"
         style="background: var(--accent); color: white;"
