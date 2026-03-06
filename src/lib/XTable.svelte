@@ -70,7 +70,7 @@
   let activeFilterDim = $state<XDimension | null>(null)
   let expandedCell = $state<string | null>(null) // "row\0col" key of expanded cell
 
-  type SortTarget = { type: 'rowTotal' } | { type: 'colValue'; col: string }
+  type SortTarget = { type: 'rowName' } | { type: 'rowTotal' } | { type: 'colValue'; col: string }
   let sortTarget = $state<SortTarget>({ type: 'rowTotal' })
   let sortDir = $state<'desc' | 'asc'>('desc')
 
@@ -241,6 +241,10 @@
   let sortedRows = $derived.by(() => {
     const { cells, rowTotals, rows } = pivotResult
     return [...rows].sort((a, b) => {
+      if (sortTarget.type === 'rowName') {
+        const cmp = dimSort(a, b, rowDim)
+        return sortDir === 'asc' ? cmp : -cmp
+      }
       let va: number, vb: number
       if (sortTarget.type === 'rowTotal') {
         va = rowTotals.get(a) || 0
@@ -256,12 +260,12 @@
   // ─── Actions ───
   function toggleSort(target: SortTarget) {
     if (target.type === sortTarget.type &&
-        (target.type === 'rowTotal' ||
+        (target.type === 'rowName' || target.type === 'rowTotal' ||
          (target.type === 'colValue' && sortTarget.type === 'colValue' && target.col === (sortTarget as any).col))) {
       sortDir = sortDir === 'desc' ? 'asc' : 'desc'
     } else {
       sortTarget = target
-      sortDir = 'desc'
+      sortDir = target.type === 'rowName' ? 'asc' : 'desc'
     }
   }
 
@@ -395,9 +399,13 @@
     <table class="w-full text-[11px]" style="border-collapse: collapse;">
       <thead>
         <tr style="background: var(--warm-100);">
-          <th class="sticky left-0 z-10 px-3 py-2.5 text-left font-semibold whitespace-nowrap"
-            style="background: var(--warm-100); color: var(--warm-500); border-right: 2px solid var(--warm-200); border-bottom: 2px solid var(--warm-200); min-width: 140px;">
+          <th class="sticky left-0 z-10 px-3 py-2.5 text-left font-semibold whitespace-nowrap cursor-pointer hover:opacity-70 transition-opacity"
+            style="background: var(--warm-100); color: var(--warm-500); border-right: 2px solid var(--warm-200); border-bottom: 2px solid var(--warm-200); min-width: 140px;"
+            onclick={() => toggleSort({ type: 'rowName' })}>
             {ROW_DIMS.find(d => d.value === rowDim)?.label || rowDim} \ {COL_DIMS.find(d => d.value === colDim)?.label || colDim}
+            {#if sortTarget.type === 'rowName'}
+              <span style="color: var(--accent);">{sortDir === 'asc' ? '↑' : '↓'}</span>
+            {/if}
           </th>
           {#each pivotResult.cols as cv}
             <th class="px-3 py-2.5 text-right font-semibold whitespace-nowrap cursor-pointer hover:opacity-70 transition-opacity"
