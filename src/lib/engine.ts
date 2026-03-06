@@ -53,6 +53,12 @@ export function getPreisgruppe(ep: number): string {
   return 'über 250 €';
 }
 
+export function getPreisObergruppe(ep: number): string {
+  if (ep < 50) return 'Niedrig (0–50 €)';
+  if (ep < 250) return 'Mittel (50–250 €)';
+  return 'Premium (über 250 €)';
+}
+
 export function getFieldValue(r: RawRow, field: string): string {
   switch (field) {
     case 'Kollektion': return r.Kollektion || '(leer)';
@@ -61,7 +67,11 @@ export function getFieldValue(r: RawRow, field: string): string {
     case 'SubKollektion': return r.SubKollektion || '(leer)';
     case 'Form': return r.Form || '(leer)';
     case 'Preisgruppe': return getPreisgruppe(Number(r.EinzelPreis) || 0);
+    case 'PreisObergruppe': return getPreisObergruppe(Number(r.EinzelPreis) || 0);
     case 'Art': return r.Art || '(leer)';
+    case 'Jahr': return (r as any).Jahr || '(leer)';
+    case 'Monat': return r.Monat || '(leer)';
+    case 'JahrMonat': return (r as any).JahrMonat || '(leer)';
     default: return (r as any)[field] || '(leer)';
   }
 }

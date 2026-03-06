@@ -5,6 +5,7 @@
   import PieChart from '$lib/PieChart.svelte';
   import AreaChart from '$lib/AreaChart.svelte';
   import Dashboard from '$lib/Dashboard.svelte';
+  import XTable from '$lib/XTable.svelte';
 
   // ─── Types ───
   interface RawRow {
@@ -28,7 +29,7 @@
     subGroups?: GroupNode[];           // optional mid-level (Kollektionen inside Form/Art)
   }
 
-  type TabId = 'dashboard' | 'kollektion' | 'artikel' | 'form' | 'art' | 'formpfad' | 'preis' | 'kasse' | 'custom' | 'bubble' | 'bar' | 'pie' | 'area';
+  type TabId = 'dashboard' | 'kollektion' | 'artikel' | 'form' | 'art' | 'formpfad' | 'preis' | 'kasse' | 'custom' | 'xtable' | 'bubble' | 'bar' | 'pie' | 'area';
 
   // ─── Role-based Kasse filter ───
   const ROLE_KASSEN: Record<string, string[] | null> = {
@@ -537,6 +538,12 @@
     return 'über 250 €';
   }
 
+  function getPreisObergruppe(ep: number): string {
+    if (ep < 50) return 'Niedrig (0–50 €)';
+    if (ep < 250) return 'Mittel (50–250 €)';
+    return 'Premium (über 250 €)';
+  }
+
   // ─── Period indices (built once at load, used for O(1) filtering) ───
   let weekIdx = $state(new Map<string, number[]>());
   let monthIdx = $state(new Map<string, number[]>());
@@ -590,6 +597,8 @@
     for (const r of decoded) {
       (r as any).Preisgruppe = getPreisgruppe(Number(r.EinzelPreis) || 0);
       (r as any).Jahr = r.Datum ? r.Datum.slice(0, 4) : '2025';
+      (r as any).JahrMonat = (r as any).Jahr + '-' + r.Monat;
+      (r as any).PreisObergruppe = getPreisObergruppe(Number(r.EinzelPreis) || 0);
     }
 
     // Read role from sessionStorage and filter by allowed Kassen
@@ -716,6 +725,7 @@
     { id: 'preis', label: 'Preisgruppe' },
     { id: 'kasse', label: 'Kasse' },
     { id: 'custom', label: 'Individuell' },
+    { id: 'xtable', label: 'X-Tabelle' },
   ];
   const CHART_TABS: { id: TabId; label: string }[] = [
     { id: 'bar', label: 'Säulen' },
@@ -1000,6 +1010,12 @@
       <div class="max-w-6xl mx-auto px-5 pb-10">
         <div class="rounded-2xl p-5" style="background: white; border: 1px solid var(--warm-200); box-shadow: 0 4px 20px rgba(0,0,0,0.03);">
           <AreaChart data={areaChartData} {timeUnit} {currentPeriod} {periods} />
+        </div>
+      </div>
+    {:else if activeTab === 'xtable'}
+      <div class="max-w-6xl mx-auto px-5 pb-10">
+        <div class="rounded-2xl p-5" style="background: white; border: 1px solid var(--warm-200); box-shadow: 0 4px 20px rgba(0,0,0,0.03);">
+          <XTable data={filteredData} />
         </div>
       </div>
     {:else if activeTab === 'artikel'}
