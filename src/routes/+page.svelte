@@ -172,6 +172,13 @@
   let artikelSortMode = $state<'umsatz' | 'anzahl'>('umsatz');
   let artikelHideLow = $state(false);
   let artikelMinCount = 5;
+  let artikelVariantenMode = $state(false);
+  let expandedVariants = $state<Set<string>>(new Set());
+  function toggleVariant(key: string) {
+    const s = new Set(expandedVariants);
+    if (s.has(key)) s.delete(key); else s.add(key);
+    expandedVariants = s;
+  }
 
   // ─── Pick & Share (named article lists) ───
   interface PickItem { nr: string; bildId: string; kollektion: string; einzelPreis: number; }
@@ -359,6 +366,43 @@
       kassenStats: Array.from(sK.entries()).map(([kasse, anzahl]) => ({ kasse, anzahl })).sort((x, y) => y.anzahl - x.anzahl),
     } : null;
     return { items: shown, sonstige };
+  });
+
+  // ─── Varianten-Gruppierung für Artikel-Tab ───
+  interface VariantGroup {
+    key: string; umsatz: number; anzahl: number; count: number;
+    thumbBildId: string; thumbNr: string;
+    articles: ArticleNode[];
+  }
+
+  let artikelVarianten = $derived.by((): VariantGroup[] => {
+    if (!filteredData.length) return [];
+    // Step 1: build BildId → variantKey mapping from RawRows
+    const bildToVariant = new Map<string, string>();
+    for (const r of filteredData) {
+      const bid = String(r.BildId);
+      if (!bid || bid === '0') continue;
+      if (!bildToVariant.has(bid)) {
+        bildToVariant.set(bid, `${r.Kollektion}|${r.Form}|${(r as any).Preisgruppe}`);
+      }
+    }
+    // Step 2: group allArticles.items by variantKey
+    const groups = new Map<string, ArticleNode[]>();
+    for (const art of allArticles.items) {
+      const vk = bildToVariant.get(art.bildId) || art.bildId;
+      if (!groups.has(vk)) groups.set(vk, []);
+      groups.get(vk)!.push(art);
+    }
+    // Step 3: build VariantGroup[]
+    return Array.from(groups.entries()).map(([key, arts]) => {
+      const top = arts[0];
+      return {
+        key, thumbBildId: top.bildId, thumbNr: top.nr || '',
+        umsatz: arts.reduce((s, a) => s + a.umsatz, 0),
+        anzahl: arts.reduce((s, a) => s + a.anzahl, 0),
+        count: arts.length, articles: arts,
+      };
+    }).sort((a, b) => artikelSortMode === 'umsatz' ? b.umsatz - a.umsatz : b.anzahl - a.anzahl);
   });
 
   // Compare L1 lookup for showing (vergleich) in the table
@@ -1031,71 +1075,132 @@
                   style="background: {artikelSortMode === 'anzahl' ? 'var(--accent)' : 'white'}; color: {artikelSortMode === 'anzahl' ? 'white' : 'var(--warm-500)'}; border-left: 1px solid var(--warm-200);">Anzahl</button>
               </div>
             </div>
-            <label class="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" bind:checked={artikelHideLow} class="accent-[var(--accent)]" />
-              <span class="text-[11px]" style="color: var(--warm-500);">Unter {artikelMinCount} Stk als „Sonstige“</span>
-            </label>
-            <p class="text-[10px] ml-auto" style="color: var(--warm-400);">{allArticles.items.length} Artikel{allArticles.sonstige ? ' + Sonstige' : ''}</p>
+            <div class="flex items-center gap-2">
+              <p class="text-[10px] font-semibold uppercase tracking-[0.12em]" style="color: var(--warm-400);">Anzeige:</p>
+              <div class="flex rounded-lg overflow-hidden" style="border: 1px solid var(--warm-200);">
+                <button onclick={() => (artikelVariantenMode = false, expandedVariants = new Set())} class="px-3 py-1 text-[11px] font-medium"
+                  style="background: {!artikelVariantenMode ? 'var(--accent)' : 'white'}; color: {!artikelVariantenMode ? 'white' : 'var(--warm-500)'};">Alle</button>
+                <button onclick={() => (artikelVariantenMode = true)} class="px-3 py-1 text-[11px] font-medium"
+                  style="background: {artikelVariantenMode ? 'var(--accent)' : 'white'}; color: {artikelVariantenMode ? 'white' : 'var(--warm-500)'}; border-left: 1px solid var(--warm-200);">Varianten</button>
+              </div>
+            </div>
+            {#if artikelVariantenMode}
+              <button onclick={() => (expandedVariants = expandedVariants.size > 0 ? new Set() : new Set(artikelVarianten.map(v => v.key)))}
+                class="px-2 py-1 text-[10px] rounded-lg" style="border: 1px solid var(--warm-200); color: var(--warm-500); background: white;">
+                {expandedVariants.size > 0 ? '↕ Alle zuklappen' : '↕ Alle aufklappen'}
+              </button>
+            {/if}
+            {#if !artikelVariantenMode}
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" bind:checked={artikelHideLow} class="accent-[var(--accent)]" />
+                <span class="text-[11px]" style="color: var(--warm-500);">Unter {artikelMinCount} Stk als „Sonstige"</span>
+              </label>
+            {/if}
+            <p class="text-[10px] ml-auto" style="color: var(--warm-400);">
+              {#if artikelVariantenMode}{artikelVarianten.length} Varianten · {allArticles.items.length} Artikel{:else}{allArticles.items.length} Artikel{allArticles.sonstige ? ' + Sonstige' : ''}{/if}
+            </p>
           </div>
           <div class="flex flex-wrap gap-3">
-            {#each allArticles.items as art (art.bildId)}
-              {@const aKey = `all::${art.bildId}`}
-              {@const aOpen = expandedArticles.has(aKey)}
-              <div class="flex flex-col">
-                <!-- svelte-ignore a11y_click_events_have_key_events -->
-                <!-- svelte-ignore a11y_no_static_element_interactions -->
-                <div class="cursor-pointer" onclick={() => expandedArticles = toggleSet(expandedArticles, aKey)}>
-                  <div class="relative w-20 h-20 sm:w-24 sm:h-24 rounded-xl overflow-hidden shadow-sm transition-all hover:shadow-lg hover:scale-105" style="border: 1.5px solid {aOpen ? 'var(--accent)' : 'var(--warm-200)'};">
-                    <img src={imgUrl(art.bildId, 200)} alt="" class="w-full h-full object-cover" loading="lazy" onerror={(e) => { (e.currentTarget as HTMLImageElement).parentElement!.style.display='none'; }} />
-                    {#if art.nr}<button class="absolute top-0.5 right-0.5 w-5 h-5 rounded-full flex items-center justify-center text-white text-[10px] shadow-sm" style="background: {activeItems.has(art.nr) ? 'var(--accent)' : 'rgba(0,0,0,0.45)'};" onclick={(e) => { e.stopPropagation(); togglePick(art); }} title="Zur Liste">{activeItems.has(art.nr) ? '✓' : '+'}</button>{/if}
-                  </div>
-                  <div class="mt-1.5 text-center">
-                    <p class="text-[10px] font-medium tabular-nums" style="color: var(--warm-700);">{fmtEUR(art.umsatz)}</p>
-                    <p class="text-[9px] tabular-nums" style="color: var(--warm-400);">{fmtNum(art.anzahl)} Stk</p>
-                    {#if art.nr}<a href="https://www.konplott.com/go/{art.nr}" target="_blank" rel="noopener" class="text-[8px] underline hover:no-underline" style="color: var(--accent);" onclick={(e) => e.stopPropagation()}>Shop ↗</a>{/if}
-                  </div>
-                </div>
-                {#if aOpen}
-                  <div class="mt-2 w-52 sm:w-60 rounded-xl p-3 shadow-md" style="background: white; border: 1px solid var(--warm-200);">
-                    <div class="flex items-center gap-2 mb-2">
-                      <!-- svelte-ignore a11y_click_events_have_key_events -->
-                      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-                      <img src={imgUrl(art.bildId, 60)} alt="" class="w-7 h-7 rounded object-cover cursor-pointer" onclick={(e) => { e.stopPropagation(); lightboxUrl = imgUrl(art.bildId, 1000); }} />
-                      <div>
-                        <p class="text-[10px] font-semibold" style="color: var(--warm-700);">{fmtEUR(art.umsatz)} · {fmtNum(art.anzahl)} Stk</p>
-                        {#if art.nr}<a href="https://www.konplott.com/go/{art.nr}" target="_blank" rel="noopener" class="text-[9px] underline" style="color: var(--accent);">konplott.com/go/{art.nr}</a>{/if}
-                      </div>
+            {#if artikelVariantenMode}
+              <!-- Varianten-Modus -->
+              {#each artikelVarianten as vg (vg.key)}
+                {@const vOpen = expandedVariants.has(vg.key)}
+                <div class="flex flex-col">
+                  <!-- svelte-ignore a11y_click_events_have_key_events -->
+                  <!-- svelte-ignore a11y_no_static_element_interactions -->
+                  <div class="cursor-pointer" onclick={() => toggleVariant(vg.key)}>
+                    <div class="relative w-20 h-20 sm:w-24 sm:h-24 rounded-xl overflow-hidden shadow-sm transition-all hover:shadow-lg hover:scale-105" style="border: 1.5px solid {vOpen ? 'var(--accent)' : 'var(--warm-200)'};">
+                      <img src={imgUrl(vg.thumbBildId, 200)} alt="" class="w-full h-full object-cover" loading="lazy" onerror={(e) => { (e.currentTarget as HTMLImageElement).parentElement!.style.display='none'; }} />
+                      {#if vg.count > 1}
+                        <span class="absolute bottom-0.5 left-0.5 px-1.5 py-0.5 rounded-full text-[8px] font-bold" style="background: var(--accent); color: white;">{vg.count}×</span>
+                      {/if}
                     </div>
-                    <p class="text-[9px] font-semibold mb-1.5" style="color: var(--warm-400);">Verkäufe nach Kasse</p>
-                    {#each art.kassenStats as ks}
-                      <div class="flex items-center justify-between py-0.5"><span class="text-[10px] truncate" style="color: var(--warm-600); max-width: 120px;" title={ks.kasse}>{ks.kasse}</span><span class="text-[10px] tabular-nums font-medium" style="color: var(--warm-700);">{fmtNum(ks.anzahl)} Stk</span></div>
-                    {/each}
+                    <div class="mt-1.5 text-center">
+                      <p class="text-[10px] font-medium tabular-nums" style="color: var(--warm-700);">{fmtEUR(vg.umsatz)}</p>
+                      <p class="text-[9px] tabular-nums" style="color: var(--warm-400);">{fmtNum(vg.anzahl)} Stk</p>
+                    </div>
                   </div>
-                {/if}
-              </div>
-            {/each}
-            {#if allArticles.sonstige}
-              {@const sKey = 'all::sonstige'}
-              {@const sOpen = expandedArticles.has(sKey)}
-              <div class="flex flex-col">
-                <!-- svelte-ignore a11y_click_events_have_key_events -->
-                <!-- svelte-ignore a11y_no_static_element_interactions -->
-                <div class="cursor-pointer" onclick={() => expandedArticles = toggleSet(expandedArticles, sKey)}>
-                  <div class="w-20 h-20 sm:w-24 sm:h-24 rounded-xl overflow-hidden shadow-sm flex items-center justify-center" style="border: 1.5px solid {sOpen ? 'var(--accent)' : 'var(--warm-200)'}; background: var(--warm-100);">
-                    <span class="text-xs font-bold" style="color: var(--warm-400);">Sonstige</span>
-                  </div>
-                  <div class="mt-1.5 text-center"><p class="text-[10px] font-medium tabular-nums" style="color: var(--warm-700);">{fmtEUR(allArticles.sonstige.umsatz)}</p><p class="text-[9px] tabular-nums" style="color: var(--warm-400);">{fmtNum(allArticles.sonstige.anzahl)} Stk</p></div>
+                  {#if vOpen}
+                    <div class="mt-2 flex flex-wrap gap-2 p-2 rounded-xl" style="background: var(--warm-50); border: 1px solid var(--warm-200);">
+                      {#each vg.articles as art (art.bildId)}
+                        <div class="flex flex-col items-center">
+                          <!-- svelte-ignore a11y_click_events_have_key_events -->
+                          <!-- svelte-ignore a11y_no_static_element_interactions -->
+                          <div class="relative w-16 h-16 rounded-lg overflow-hidden shadow-sm cursor-pointer" style="border: 1px solid var(--warm-200);"
+                            onclick={(e) => { e.stopPropagation(); lightboxUrl = imgUrl(art.bildId, 1000); }}>
+                            <img src={imgUrl(art.bildId, 160)} alt="" class="w-full h-full object-cover" loading="lazy" onerror={(e) => { (e.currentTarget as HTMLImageElement).parentElement!.style.display='none'; }} />
+                            {#if art.nr}<button class="absolute top-0.5 right-0.5 w-4 h-4 rounded-full flex items-center justify-center text-white text-[8px] shadow-sm" style="background: {activeItems.has(art.nr) ? 'var(--accent)' : 'rgba(0,0,0,0.45)'};" onclick={(e) => { e.stopPropagation(); togglePick(art); }} title="Zur Liste">{activeItems.has(art.nr) ? '✓' : '+'}</button>{/if}
+                          </div>
+                          <p class="text-[9px] font-medium tabular-nums mt-1" style="color: var(--warm-700);">{fmtEUR(art.umsatz)}</p>
+                          <p class="text-[8px] tabular-nums" style="color: var(--warm-400);">{fmtNum(art.anzahl)} Stk</p>
+                          {#if art.nr}<a href="https://www.konplott.com/go/{art.nr}" target="_blank" rel="noopener" class="text-[7px] underline" style="color: var(--accent);" onclick={(e) => e.stopPropagation()}>Shop ↗</a>{/if}
+                        </div>
+                      {/each}
+                    </div>
+                  {/if}
                 </div>
-                {#if sOpen}
-                  <div class="mt-2 w-52 sm:w-60 rounded-xl p-3 shadow-md" style="background: white; border: 1px solid var(--warm-200);">
-                    <p class="text-[10px] font-semibold mb-1" style="color: var(--warm-700);">{fmtEUR(allArticles.sonstige.umsatz)} · {fmtNum(allArticles.sonstige.anzahl)} Stk</p>
-                    <p class="text-[9px] font-semibold mb-1.5" style="color: var(--warm-400);">Verkäufe nach Kasse</p>
-                    {#each allArticles.sonstige.kassenStats as ks}
-                      <div class="flex items-center justify-between py-0.5"><span class="text-[10px] truncate" style="color: var(--warm-600); max-width: 120px;" title={ks.kasse}>{ks.kasse}</span><span class="text-[10px] tabular-nums font-medium" style="color: var(--warm-700);">{fmtNum(ks.anzahl)} Stk</span></div>
-                    {/each}
+              {/each}
+            {:else}
+              <!-- Alle-Modus (original) -->
+              {#each allArticles.items as art (art.bildId)}
+                {@const aKey = `all::${art.bildId}`}
+                {@const aOpen = expandedArticles.has(aKey)}
+                <div class="flex flex-col">
+                  <!-- svelte-ignore a11y_click_events_have_key_events -->
+                  <!-- svelte-ignore a11y_no_static_element_interactions -->
+                  <div class="cursor-pointer" onclick={() => expandedArticles = toggleSet(expandedArticles, aKey)}>
+                    <div class="relative w-20 h-20 sm:w-24 sm:h-24 rounded-xl overflow-hidden shadow-sm transition-all hover:shadow-lg hover:scale-105" style="border: 1.5px solid {aOpen ? 'var(--accent)' : 'var(--warm-200)'};">
+                      <img src={imgUrl(art.bildId, 200)} alt="" class="w-full h-full object-cover" loading="lazy" onerror={(e) => { (e.currentTarget as HTMLImageElement).parentElement!.style.display='none'; }} />
+                      {#if art.nr}<button class="absolute top-0.5 right-0.5 w-5 h-5 rounded-full flex items-center justify-center text-white text-[10px] shadow-sm" style="background: {activeItems.has(art.nr) ? 'var(--accent)' : 'rgba(0,0,0,0.45)'};" onclick={(e) => { e.stopPropagation(); togglePick(art); }} title="Zur Liste">{activeItems.has(art.nr) ? '✓' : '+'}</button>{/if}
+                    </div>
+                    <div class="mt-1.5 text-center">
+                      <p class="text-[10px] font-medium tabular-nums" style="color: var(--warm-700);">{fmtEUR(art.umsatz)}</p>
+                      <p class="text-[9px] tabular-nums" style="color: var(--warm-400);">{fmtNum(art.anzahl)} Stk</p>
+                      {#if art.nr}<a href="https://www.konplott.com/go/{art.nr}" target="_blank" rel="noopener" class="text-[8px] underline hover:no-underline" style="color: var(--accent);" onclick={(e) => e.stopPropagation()}>Shop ↗</a>{/if}
+                    </div>
                   </div>
-                {/if}
-              </div>
+                  {#if aOpen}
+                    <div class="mt-2 w-52 sm:w-60 rounded-xl p-3 shadow-md" style="background: white; border: 1px solid var(--warm-200);">
+                      <div class="flex items-center gap-2 mb-2">
+                        <!-- svelte-ignore a11y_click_events_have_key_events -->
+                        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+                        <img src={imgUrl(art.bildId, 60)} alt="" class="w-7 h-7 rounded object-cover cursor-pointer" onclick={(e) => { e.stopPropagation(); lightboxUrl = imgUrl(art.bildId, 1000); }} />
+                        <div>
+                          <p class="text-[10px] font-semibold" style="color: var(--warm-700);">{fmtEUR(art.umsatz)} · {fmtNum(art.anzahl)} Stk</p>
+                          {#if art.nr}<a href="https://www.konplott.com/go/{art.nr}" target="_blank" rel="noopener" class="text-[9px] underline" style="color: var(--accent);">konplott.com/go/{art.nr}</a>{/if}
+                        </div>
+                      </div>
+                      <p class="text-[9px] font-semibold mb-1.5" style="color: var(--warm-400);">Verkäufe nach Kasse</p>
+                      {#each art.kassenStats as ks}
+                        <div class="flex items-center justify-between py-0.5"><span class="text-[10px] truncate" style="color: var(--warm-600); max-width: 120px;" title={ks.kasse}>{ks.kasse}</span><span class="text-[10px] tabular-nums font-medium" style="color: var(--warm-700);">{fmtNum(ks.anzahl)} Stk</span></div>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
+              {/each}
+              {#if allArticles.sonstige}
+                {@const sKey = 'all::sonstige'}
+                {@const sOpen = expandedArticles.has(sKey)}
+                <div class="flex flex-col">
+                  <!-- svelte-ignore a11y_click_events_have_key_events -->
+                  <!-- svelte-ignore a11y_no_static_element_interactions -->
+                  <div class="cursor-pointer" onclick={() => expandedArticles = toggleSet(expandedArticles, sKey)}>
+                    <div class="w-20 h-20 sm:w-24 sm:h-24 rounded-xl overflow-hidden shadow-sm flex items-center justify-center" style="border: 1.5px solid {sOpen ? 'var(--accent)' : 'var(--warm-200)'}; background: var(--warm-100);">
+                      <span class="text-xs font-bold" style="color: var(--warm-400);">Sonstige</span>
+                    </div>
+                    <div class="mt-1.5 text-center"><p class="text-[10px] font-medium tabular-nums" style="color: var(--warm-700);">{fmtEUR(allArticles.sonstige.umsatz)}</p><p class="text-[9px] tabular-nums" style="color: var(--warm-400);">{fmtNum(allArticles.sonstige.anzahl)} Stk</p></div>
+                  </div>
+                  {#if sOpen}
+                    <div class="mt-2 w-52 sm:w-60 rounded-xl p-3 shadow-md" style="background: white; border: 1px solid var(--warm-200);">
+                      <p class="text-[10px] font-semibold mb-1" style="color: var(--warm-700);">{fmtEUR(allArticles.sonstige.umsatz)} · {fmtNum(allArticles.sonstige.anzahl)} Stk</p>
+                      <p class="text-[9px] font-semibold mb-1.5" style="color: var(--warm-400);">Verkäufe nach Kasse</p>
+                      {#each allArticles.sonstige.kassenStats as ks}
+                        <div class="flex items-center justify-between py-0.5"><span class="text-[10px] truncate" style="color: var(--warm-600); max-width: 120px;" title={ks.kasse}>{ks.kasse}</span><span class="text-[10px] tabular-nums font-medium" style="color: var(--warm-700);">{fmtNum(ks.anzahl)} Stk</span></div>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
+              {/if}
             {/if}
           </div>
         </div>

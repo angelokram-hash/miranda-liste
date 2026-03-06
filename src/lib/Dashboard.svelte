@@ -105,6 +105,44 @@
     });
   });
 
+  // Varianten-Gruppierung
+  let variantenMode = $state(false);
+  let expandedVariants = $state<Set<string>>(new Set());
+
+  function getPreisgruppe(ep: number): string {
+    if (ep < 20) return '0–20'; if (ep < 50) return '20–50'; if (ep < 120) return '50–120'; if (ep < 250) return '120–250'; return '250+';
+  }
+
+  function toggleDashVariant(key: string) {
+    const s = new Set(expandedVariants);
+    if (s.has(key)) s.delete(key); else s.add(key);
+    expandedVariants = s;
+  }
+
+  interface TopVariant { key: string; umsatz: number; anzahl: number; count: number; thumbBildId: string; articles: TopArt[]; }
+  let variantTopArticles = $derived.by((): TopVariant[] => {
+    // Build BildId → variantKey mapping from RawRows
+    const bildToVk = new Map<string, string>();
+    for (const r of data) {
+      const bid = String(r.BildId);
+      if (!bid || bid === '0' || bildToVk.has(bid)) continue;
+      bildToVk.set(bid, `${r.Kollektion}|${r.Form}|${getPreisgruppe(Number(r.EinzelPreis) || 0)}`);
+    }
+    // Group topArticles by variantKey
+    const groups = new Map<string, TopArt[]>();
+    for (const art of topArticles) {
+      const vk = bildToVk.get(art.bildId) || art.bildId;
+      if (!groups.has(vk)) groups.set(vk, []);
+      groups.get(vk)!.push(art);
+    }
+    return Array.from(groups.entries()).map(([key, arts]) => ({
+      key, thumbBildId: arts[0].bildId,
+      umsatz: arts.reduce((s, a) => s + a.umsatz, 0),
+      anzahl: arts.reduce((s, a) => s + a.anzahl, 0),
+      count: arts.length, articles: arts,
+    })).sort((a, b) => b.umsatz - a.umsatz);
+  });
+
   // Top 10 Kollektionen
   interface TopKoll { name: string; umsatz: number; anzahl: number; anteil: number; compUmsatz: number; rankChange: number; }
   let top10Koll = $derived.by((): TopKoll[] => {
@@ -335,37 +373,88 @@
 <div class="space-y-6">
   <!-- Top Artikel -->
   <div class="rounded-xl p-4" style="background: white; border: 1px solid var(--warm-200);">
-    <div class="flex items-center justify-between mb-3">
-      <h3 class="text-xs font-semibold uppercase tracking-[0.15em]" style="color: var(--warm-400);">Top {artShowAll ? 30 : 10} Artikel</h3>
-      <button onclick={() => artShowAll = !artShowAll} class="text-[10px] font-medium px-3 py-1 rounded-lg" style="color: var(--accent); border: 1px solid var(--warm-200);">{artShowAll ? 'Weniger' : 'Top 30 zeigen'}</button>
+    <div class="flex items-center gap-3 mb-3">
+      <h3 class="text-xs font-semibold uppercase tracking-[0.15em]" style="color: var(--warm-400);">Top {artShowAll ? 30 : 10} {variantenMode ? 'Varianten' : 'Artikel'}</h3>
+      <div class="flex rounded-lg overflow-hidden" style="border: 1px solid var(--warm-200);">
+        <button onclick={() => (variantenMode = false, expandedVariants = new Set())} class="px-2 py-0.5 text-[9px] font-medium"
+          style="background: {!variantenMode ? 'var(--accent)' : 'white'}; color: {!variantenMode ? 'white' : 'var(--warm-500)'};">Alle</button>
+        <button onclick={() => variantenMode = true} class="px-2 py-0.5 text-[9px] font-medium"
+          style="background: {variantenMode ? 'var(--accent)' : 'white'}; color: {variantenMode ? 'white' : 'var(--warm-500)'}; border-left: 1px solid var(--warm-200);">Varianten</button>
+      </div>
+      {#if variantenMode}
+        <button onclick={() => (expandedVariants = expandedVariants.size > 0 ? new Set() : new Set(variantTopArticles.map(v => v.key)))}
+          class="px-2 py-0.5 text-[9px] rounded-lg" style="border: 1px solid var(--warm-200); color: var(--warm-500); background: white;">
+          {expandedVariants.size > 0 ? '↕ Zu' : '↕ Auf'}
+        </button>
+      {/if}
+      <button onclick={() => artShowAll = !artShowAll} class="text-[10px] font-medium px-3 py-1 rounded-lg ml-auto" style="color: var(--accent); border: 1px solid var(--warm-200);">{artShowAll ? 'Weniger' : 'Top 30 zeigen'}</button>
     </div>
     <div class="overflow-y-auto" style="max-height: {artShowAll ? '420px' : '210px'};">
       <div class="flex flex-wrap gap-3 content-start">
-        {#each (artShowAll ? topArticles : topArticles.slice(0, 10)) as art, i}
-          <div class="flex-shrink-0 w-24">
-            <div class="relative pt-2 pl-2">
-              <div class="relative w-[88px] h-[88px] rounded-xl overflow-hidden shadow-sm" style="border: 1.5px solid var(--warm-200);">
-                <img src={imgUrl(art.bildId, 200)} alt="" class="w-full h-full object-cover" loading="lazy" onerror={(e) => { (e.currentTarget as HTMLImageElement).style.display='none'; }} />
-                {#if art.nr && onTogglePick}<button class="absolute top-0.5 right-0.5 w-5 h-5 rounded-full flex items-center justify-center text-white text-[10px] shadow-sm" style="background: {pickedNrs.has(art.nr) ? 'var(--accent)' : 'rgba(0,0,0,0.45)'};" onclick={(e) => { e.stopPropagation(); onTogglePick({ nr: art.nr, bildId: art.bildId, kollektion: art.koll, einzelPreis: art.umsatz / (art.anzahl || 1) }); }} title="Zur Liste">{pickedNrs.has(art.nr) ? '✓' : '+'}</button>{/if}
+        {#if variantenMode}
+          {#each (artShowAll ? variantTopArticles : variantTopArticles.slice(0, 10)) as vg, i}
+            {@const vOpen = expandedVariants.has(vg.key)}
+            <div class="flex-shrink-0">
+              <!-- svelte-ignore a11y_click_events_have_key_events -->
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <div class="w-24 cursor-pointer" onclick={() => toggleDashVariant(vg.key)}>
+                <div class="relative pt-2 pl-2">
+                  <div class="relative w-[88px] h-[88px] rounded-xl overflow-hidden shadow-sm" style="border: 1.5px solid {vOpen ? 'var(--accent)' : 'var(--warm-200)'};">
+                    <img src={imgUrl(vg.thumbBildId, 200)} alt="" class="w-full h-full object-cover" loading="lazy" onerror={(e) => { (e.currentTarget as HTMLImageElement).style.display='none'; }} />
+                    {#if vg.count > 1}
+                      <span class="absolute bottom-0.5 left-0.5 px-1.5 py-0.5 rounded-full text-[8px] font-bold" style="background: var(--accent); color: white;">{vg.count}×</span>
+                    {/if}
+                  </div>
+                  <div class="absolute top-0 left-0 min-w-5 h-5 px-1 rounded-full flex items-center justify-center text-[8px] font-bold" style="background: var(--accent); color: white;">{i + 1}</div>
+                </div>
+                <div class="mt-1.5 text-center">
+                  <p class="text-[10px] font-semibold tabular-nums" style="color: var(--warm-700);">{fmtEUR(vg.umsatz)}</p>
+                  <p class="text-[9px] tabular-nums" style="color: var(--warm-400);">{fmtNum(vg.anzahl)} Stk</p>
+                </div>
               </div>
-              <div class="absolute top-0 left-0 min-w-5 h-5 px-1 rounded-full flex items-center justify-center text-[8px] font-bold" style="background: {rankBadgeColor(i + 1, art.compRank)}; color: white;">
-                {i + 1}{#if art.compRank > 0}<span class="font-normal opacity-80">({art.compRank})</span>{/if}
-              </div>
-            </div>
-            <div class="mt-1.5 text-center">
-              <p class="text-[10px] font-semibold tabular-nums" style="color: var(--warm-700);">{fmtEUR(art.umsatz)}</p>
-              <p class="text-[9px] tabular-nums" style="color: var(--warm-400);">{fmtNum(art.anzahl)} Stk</p>
-              {#if art.compUmsatz > 0}
-                <p class="text-[8px] tabular-nums" style="color: var(--warm-400);">Vgl: {fmtEUR(art.compUmsatz)}</p>
-                <p class="text-[8px] font-semibold tabular-nums" style="color: {deltaColor(art.umsatz, art.compUmsatz)};">{fmtDelta(art.umsatz, art.compUmsatz)}</p>
+              {#if vOpen}
+                <div class="mt-2 flex flex-wrap gap-2 p-2 rounded-xl" style="background: var(--warm-50); border: 1px solid var(--warm-200);">
+                  {#each vg.articles as art}
+                    <div class="flex flex-col items-center w-16">
+                      <div class="relative w-14 h-14 rounded-lg overflow-hidden shadow-sm" style="border: 1px solid var(--warm-200);">
+                        <img src={imgUrl(art.bildId, 160)} alt="" class="w-full h-full object-cover" loading="lazy" onerror={(e) => { (e.currentTarget as HTMLImageElement).style.display='none'; }} />
+                        {#if art.nr && onTogglePick}<button class="absolute top-0 right-0 w-4 h-4 rounded-full flex items-center justify-center text-white text-[7px] shadow-sm" style="background: {pickedNrs.has(art.nr) ? 'var(--accent)' : 'rgba(0,0,0,0.45)'};" onclick={(e) => { e.stopPropagation(); onTogglePick({ nr: art.nr, bildId: art.bildId, kollektion: art.koll, einzelPreis: art.umsatz / (art.anzahl || 1) }); }}>{pickedNrs.has(art.nr) ? '✓' : '+'}</button>{/if}
+                      </div>
+                      <p class="text-[8px] font-medium tabular-nums mt-0.5" style="color: var(--warm-700);">{fmtEUR(art.umsatz)}</p>
+                      <p class="text-[7px] tabular-nums" style="color: var(--warm-400);">{fmtNum(art.anzahl)} Stk</p>
+                    </div>
+                  {/each}
+                </div>
               {/if}
-              {#if art.nr}<a href="https://www.konplott.com/go/{art.nr}" target="_blank" rel="noopener" onclick={(e) => e.stopPropagation()} class="text-[8px] underline" style="color: var(--accent);">Shop &#8599;</a>{/if}
             </div>
-            <div class="mt-1 space-y-0">
-              {#each art.topShops as shop}<p class="text-[8px] truncate" style="color: var(--warm-400);" title={shop.name}>{shop.name} ({shop.anzahl})</p>{/each}
+          {/each}
+        {:else}
+          {#each (artShowAll ? topArticles : topArticles.slice(0, 10)) as art, i}
+            <div class="flex-shrink-0 w-24">
+              <div class="relative pt-2 pl-2">
+                <div class="relative w-[88px] h-[88px] rounded-xl overflow-hidden shadow-sm" style="border: 1.5px solid var(--warm-200);">
+                  <img src={imgUrl(art.bildId, 200)} alt="" class="w-full h-full object-cover" loading="lazy" onerror={(e) => { (e.currentTarget as HTMLImageElement).style.display='none'; }} />
+                  {#if art.nr && onTogglePick}<button class="absolute top-0.5 right-0.5 w-5 h-5 rounded-full flex items-center justify-center text-white text-[10px] shadow-sm" style="background: {pickedNrs.has(art.nr) ? 'var(--accent)' : 'rgba(0,0,0,0.45)'};" onclick={(e) => { e.stopPropagation(); onTogglePick({ nr: art.nr, bildId: art.bildId, kollektion: art.koll, einzelPreis: art.umsatz / (art.anzahl || 1) }); }} title="Zur Liste">{pickedNrs.has(art.nr) ? '✓' : '+'}</button>{/if}
+                </div>
+                <div class="absolute top-0 left-0 min-w-5 h-5 px-1 rounded-full flex items-center justify-center text-[8px] font-bold" style="background: {rankBadgeColor(i + 1, art.compRank)}; color: white;">
+                  {i + 1}{#if art.compRank > 0}<span class="font-normal opacity-80">({art.compRank})</span>{/if}
+                </div>
+              </div>
+              <div class="mt-1.5 text-center">
+                <p class="text-[10px] font-semibold tabular-nums" style="color: var(--warm-700);">{fmtEUR(art.umsatz)}</p>
+                <p class="text-[9px] tabular-nums" style="color: var(--warm-400);">{fmtNum(art.anzahl)} Stk</p>
+                {#if art.compUmsatz > 0}
+                  <p class="text-[8px] tabular-nums" style="color: var(--warm-400);">Vgl: {fmtEUR(art.compUmsatz)}</p>
+                  <p class="text-[8px] font-semibold tabular-nums" style="color: {deltaColor(art.umsatz, art.compUmsatz)};">{fmtDelta(art.umsatz, art.compUmsatz)}</p>
+                {/if}
+                {#if art.nr}<a href="https://www.konplott.com/go/{art.nr}" target="_blank" rel="noopener" onclick={(e) => e.stopPropagation()} class="text-[8px] underline" style="color: var(--accent);">Shop &#8599;</a>{/if}
+              </div>
+              <div class="mt-1 space-y-0">
+                {#each art.topShops as shop}<p class="text-[8px] truncate" style="color: var(--warm-400);" title={shop.name}>{shop.name} ({shop.anzahl})</p>{/each}
+              </div>
             </div>
-          </div>
-        {/each}
+          {/each}
+        {/if}
       </div>
     </div>
   </div>

@@ -6,9 +6,14 @@
   }
 
   interface CellArticle {
-    bildId: string; nr: string; kollektion: string; einzelPreis: number;
-    umsatz: number; anzahl: number;
+    bildId: string; nr: string; kollektion: string; form: string; preisgruppe: string;
+    einzelPreis: number; umsatz: number; anzahl: number;
     kassenStats: { kasse: string; anzahl: number }[];
+  }
+
+  interface XVariantGroup {
+    key: string; umsatz: number; anzahl: number; count: number;
+    thumbBildId: string; articles: CellArticle[];
   }
 
   interface CellData {
@@ -69,6 +74,13 @@
   let filters = $state<Map<XDimension, Set<string>>>(new Map())
   let activeFilterDim = $state<XDimension | null>(null)
   let expandedCell = $state<string | null>(null) // "row\0col" key of expanded cell
+  let xVariantenMode = $state(false)
+  let expandedVariantsX = $state<Set<string>>(new Set())
+  function toggleXVariant(key: string) {
+    const s = new Set(expandedVariantsX);
+    if (s.has(key)) s.delete(key); else s.add(key);
+    expandedVariantsX = s;
+  }
 
   type SortTarget = { type: 'rowName' } | { type: 'rowTotal' } | { type: 'colValue'; col: string }
   let sortTarget = $state<SortTarget>({ type: 'rowTotal' })
@@ -124,25 +136,46 @@
     return a.localeCompare(b, 'de')
   }
 
+  function xPreisgruppe(ep: number): string {
+    if (ep < 20) return '0–20'; if (ep < 50) return '20–50'; if (ep < 120) return '50–120'; if (ep < 250) return '120–250'; return '250+'
+  }
+
   function buildArticles(rows: RawRow[]): CellArticle[] {
-    const m = new Map<string, { nr: string; kollektion: string; umsatz: number; anzahl: number; kassen: Map<string, number> }>()
+    const m = new Map<string, { nr: string; kollektion: string; form: string; preisgruppe: string; umsatz: number; anzahl: number; kassen: Map<string, number> }>()
     for (const r of rows) {
       const bid = String(r.BildId)
       if (!bid || bid === '0') continue
-      if (!m.has(bid)) m.set(bid, { nr: '', kollektion: '', umsatz: 0, anzahl: 0, kassen: new Map() })
+      if (!m.has(bid)) m.set(bid, { nr: '', kollektion: '', form: '', preisgruppe: '', umsatz: 0, anzahl: 0, kassen: new Map() })
       const a = m.get(bid)!
       if (!a.nr && r.Nr) a.nr = String(r.Nr)
       if (!a.kollektion && r.Kollektion) a.kollektion = r.Kollektion
+      if (!a.form && r.Form) a.form = r.Form
+      if (!a.preisgruppe) a.preisgruppe = xPreisgruppe(Number(r.EinzelPreis) || 0)
       const an = Number(r.Anzahl) || 0
       a.umsatz += (Number(r.EinzelPreis) || 0) * an
       a.anzahl += an
       a.kassen.set(r.Kasse, (a.kassen.get(r.Kasse) || 0) + an)
     }
     return Array.from(m.entries()).map(([bildId, a]) => ({
-      bildId, nr: a.nr, kollektion: a.kollektion,
+      bildId, nr: a.nr, kollektion: a.kollektion, form: a.form, preisgruppe: a.preisgruppe,
       einzelPreis: a.anzahl > 0 ? a.umsatz / a.anzahl : 0,
       umsatz: a.umsatz, anzahl: a.anzahl,
       kassenStats: Array.from(a.kassen.entries()).map(([kasse, anzahl]) => ({ kasse, anzahl })).sort((x, y) => y.anzahl - x.anzahl),
+    })).sort((a, b) => b.umsatz - a.umsatz)
+  }
+
+  function groupVariants(articles: CellArticle[]): XVariantGroup[] {
+    const groups = new Map<string, CellArticle[]>()
+    for (const art of articles) {
+      const vk = `${art.kollektion}|${art.form}|${art.preisgruppe}`
+      if (!groups.has(vk)) groups.set(vk, [])
+      groups.get(vk)!.push(art)
+    }
+    return Array.from(groups.entries()).map(([key, arts]) => ({
+      key, thumbBildId: arts[0].bildId,
+      umsatz: arts.reduce((s, a) => s + a.umsatz, 0),
+      anzahl: arts.reduce((s, a) => s + a.anzahl, 0),
+      count: arts.length, articles: arts,
     })).sort((a, b) => b.umsatz - a.umsatz)
   }
 
@@ -235,6 +268,11 @@
     const rows = pivotResult.cellRows.get(expandedCell)
     if (!rows || rows.length === 0) return []
     return buildArticles(rows)
+  })
+
+  let expandedArticlesVariant = $derived.by((): XVariantGroup[] => {
+    if (!expandedArticles.length) return []
+    return groupVariants(expandedArticles)
   })
 
   // ─── Derived: sorted rows ───
@@ -470,27 +508,75 @@
               <td colspan={pivotResult.cols.length + 2}
                 style="background: var(--warm-50); border-top: 1px solid var(--warm-200); border-bottom: 2px solid var(--warm-200);">
                 <div class="px-5 py-4">
-                  <div class="flex items-center justify-between mb-3">
+                  <div class="flex items-center gap-3 mb-3">
                     <p class="text-[10px] font-semibold" style="color: var(--warm-600);">
                       {rv} × {expCv} — {expandedArticles.length} Artikel, {fmtEUR(pivotResult.cells.get(expandedCell) || 0)} Umsatz
                     </p>
+                    <div class="flex rounded-lg overflow-hidden" style="border: 1px solid var(--warm-200);">
+                      <button onclick={() => (xVariantenMode = false, expandedVariantsX = new Set())} class="px-2 py-0.5 text-[9px] font-medium"
+                        style="background: {!xVariantenMode ? 'var(--accent)' : 'white'}; color: {!xVariantenMode ? 'white' : 'var(--warm-500)'};">Alle</button>
+                      <button onclick={() => xVariantenMode = true} class="px-2 py-0.5 text-[9px] font-medium"
+                        style="background: {xVariantenMode ? 'var(--accent)' : 'white'}; color: {xVariantenMode ? 'white' : 'var(--warm-500)'}; border-left: 1px solid var(--warm-200);">Varianten</button>
+                    </div>
+                    {#if xVariantenMode}
+                      <button onclick={() => (expandedVariantsX = expandedVariantsX.size > 0 ? new Set() : new Set(expandedArticlesVariant.map(v => v.key)))}
+                        class="px-2 py-0.5 text-[9px] rounded-lg" style="border: 1px solid var(--warm-200); color: var(--warm-500); background: white;">
+                        {expandedVariantsX.size > 0 ? '↕ Zu' : '↕ Auf'}
+                      </button>
+                    {/if}
                     <button onclick={() => expandedCell = null}
-                      class="text-[10px] px-2 py-0.5 rounded-lg"
+                      class="text-[10px] px-2 py-0.5 rounded-lg ml-auto"
                       style="border: 1px solid var(--warm-200); color: var(--warm-500); background: white;">✕ Schließen</button>
                   </div>
                   <div class="flex flex-wrap gap-3">
-                    {#each expandedArticles as art (art.bildId)}
-                      <div class="flex flex-col items-center">
-                        <div class="relative w-20 h-20 sm:w-24 sm:h-24 rounded-xl overflow-hidden shadow-sm transition-all hover:shadow-lg hover:scale-105" style="border: 1.5px solid var(--warm-200);">
-                          <img src={imgUrl(art.bildId, 200)} alt="" class="w-full h-full object-cover" loading="lazy" onerror={(e) => { (e.currentTarget as HTMLImageElement).parentElement!.style.display='none'; }} />
+                    {#if xVariantenMode}
+                      {#each expandedArticlesVariant as vg (vg.key)}
+                        {@const vOpen = expandedVariantsX.has(vg.key)}
+                        <div class="flex flex-col items-center">
+                          <!-- svelte-ignore a11y_click_events_have_key_events -->
+                          <!-- svelte-ignore a11y_no_static_element_interactions -->
+                          <div class="cursor-pointer" onclick={() => toggleXVariant(vg.key)}>
+                            <div class="relative w-20 h-20 sm:w-24 sm:h-24 rounded-xl overflow-hidden shadow-sm transition-all hover:shadow-lg hover:scale-105" style="border: 1.5px solid {vOpen ? 'var(--accent)' : 'var(--warm-200)'};">
+                              <img src={imgUrl(vg.thumbBildId, 200)} alt="" class="w-full h-full object-cover" loading="lazy" onerror={(e) => { (e.currentTarget as HTMLImageElement).parentElement!.style.display='none'; }} />
+                              {#if vg.count > 1}
+                                <span class="absolute bottom-0.5 left-0.5 px-1.5 py-0.5 rounded-full text-[8px] font-bold" style="background: var(--accent); color: white;">{vg.count}×</span>
+                              {/if}
+                            </div>
+                            <div class="mt-1.5 text-center">
+                              <p class="text-[10px] font-medium tabular-nums" style="color: var(--warm-700);">{fmtEUR(vg.umsatz)}</p>
+                              <p class="text-[9px] tabular-nums" style="color: var(--warm-400);">{fmtNum(vg.anzahl)} Stk</p>
+                            </div>
+                          </div>
+                          {#if vOpen}
+                            <div class="mt-2 flex flex-wrap gap-2 p-2 rounded-xl" style="background: white; border: 1px solid var(--warm-200);">
+                              {#each vg.articles as art (art.bildId)}
+                                <div class="flex flex-col items-center">
+                                  <div class="relative w-16 h-16 rounded-lg overflow-hidden shadow-sm" style="border: 1px solid var(--warm-200);">
+                                    <img src={imgUrl(art.bildId, 160)} alt="" class="w-full h-full object-cover" loading="lazy" onerror={(e) => { (e.currentTarget as HTMLImageElement).parentElement!.style.display='none'; }} />
+                                  </div>
+                                  <p class="text-[9px] font-medium tabular-nums mt-0.5" style="color: var(--warm-700);">{fmtEUR(art.umsatz)}</p>
+                                  <p class="text-[8px] tabular-nums" style="color: var(--warm-400);">{fmtNum(art.anzahl)} Stk</p>
+                                  {#if art.nr}<a href="https://www.konplott.com/go/{art.nr}" target="_blank" rel="noopener" class="text-[7px] underline" style="color: var(--accent);" onclick={(e: MouseEvent) => e.stopPropagation()}>Shop ↗</a>{/if}
+                                </div>
+                              {/each}
+                            </div>
+                          {/if}
                         </div>
-                        <div class="mt-1.5 text-center">
-                          <p class="text-[10px] font-medium tabular-nums" style="color: var(--warm-700);">{fmtEUR(art.umsatz)}</p>
-                          <p class="text-[9px] tabular-nums" style="color: var(--warm-400);">{fmtNum(art.anzahl)} Stk</p>
-                          {#if art.nr}<a href="https://www.konplott.com/go/{art.nr}" target="_blank" rel="noopener" class="text-[8px] underline hover:no-underline" style="color: var(--accent);" onclick={(e: MouseEvent) => e.stopPropagation()}>Shop ↗</a>{/if}
+                      {/each}
+                    {:else}
+                      {#each expandedArticles as art (art.bildId)}
+                        <div class="flex flex-col items-center">
+                          <div class="relative w-20 h-20 sm:w-24 sm:h-24 rounded-xl overflow-hidden shadow-sm transition-all hover:shadow-lg hover:scale-105" style="border: 1.5px solid var(--warm-200);">
+                            <img src={imgUrl(art.bildId, 200)} alt="" class="w-full h-full object-cover" loading="lazy" onerror={(e) => { (e.currentTarget as HTMLImageElement).parentElement!.style.display='none'; }} />
+                          </div>
+                          <div class="mt-1.5 text-center">
+                            <p class="text-[10px] font-medium tabular-nums" style="color: var(--warm-700);">{fmtEUR(art.umsatz)}</p>
+                            <p class="text-[9px] tabular-nums" style="color: var(--warm-400);">{fmtNum(art.anzahl)} Stk</p>
+                            {#if art.nr}<a href="https://www.konplott.com/go/{art.nr}" target="_blank" rel="noopener" class="text-[8px] underline hover:no-underline" style="color: var(--accent);" onclick={(e: MouseEvent) => e.stopPropagation()}>Shop ↗</a>{/if}
+                          </div>
                         </div>
-                      </div>
-                    {/each}
+                      {/each}
+                    {/if}
                   </div>
                 </div>
               </td>
