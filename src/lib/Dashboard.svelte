@@ -4,21 +4,28 @@
     Form: string; FormPfad: string; Kasse: string; Art: string; Nr: string; KW: string; Monat: string; Datum: string;
   }
 
-  let { data = [], compareData = [], allData = [], timeUnit = 'woche', periods = [] as string[], currentLabel = '', compareLabel = '', pickedNrs = new Set<string>(), onTogglePick }: {
+  let { data = [], compareData = [], allData = [], timeUnit = 'woche', periods = [] as string[], currentLabel = '', compareLabel = '', pickedNrs = new Set<string>(), onTogglePick, hideEuro = false }: {
     data: RawRow[]; compareData: RawRow[]; allData: RawRow[]; timeUnit: string; periods: string[]; currentLabel: string; compareLabel: string;
     pickedNrs?: Set<string>; onTogglePick?: (art: { nr: string; bildId: string; kollektion: string; einzelPreis: number }) => void;
+    hideEuro?: boolean;
   } = $props();
 
   function imgUrl(bid: string, sz: number): string {
     return 'https://konplott-cdn.com/mytism/image/' + bid + '/' + bid + '.jpg?width=' + sz + '&height=' + sz + '&box=true';
   }
-  function fmtEUR(v: number): string { return v.toLocaleString('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }); }
-  function fmtNum(v: number): string { return v.toLocaleString('de-DE', { maximumFractionDigits: 0 }); }
-  function fmtDelta(cur: number, prev: number): string {
-    if (!prev) return '';
-    const pct = ((cur / prev) - 1) * 100;
-    return (pct > 0 ? '+' : '') + pct.toFixed(1) + '%';
-  }
+  let fmtEUR = $derived.by(() => hideEuro
+    ? (_: number) => '\u2022\u2022\u2022'
+    : (v: number) => v.toLocaleString('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }));
+  let fmtNum = $derived.by(() => hideEuro
+    ? (_: number) => '\u2022\u2022\u2022'
+    : (v: number) => v.toLocaleString('de-DE', { maximumFractionDigits: 0 }));
+  let fmtDelta = $derived.by(() => hideEuro
+    ? (_a: number, _b: number) => ''
+    : (cur: number, prev: number) => {
+        if (!prev) return '';
+        const pct = ((cur / prev) - 1) * 100;
+        return (pct > 0 ? '+' : '') + pct.toFixed(1) + '%';
+      });
   function deltaColor(cur: number, prev: number): string {
     if (cur > prev) return '#6b8e5a'; if (cur < prev) return '#c06050'; return 'var(--warm-400)';
   }

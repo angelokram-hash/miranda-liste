@@ -6,7 +6,7 @@
     Form: string; Kasse: string; Art: string;
   }
 
-  let { data = [] }: { data: RawRow[] } = $props();
+  let { data = [], hideEuro = false }: { data: RawRow[]; hideEuro?: boolean } = $props();
 
   type XField = 'FormPfad' | 'Form' | 'Kasse';
   type ValMode = 'anzahl' | 'umsatz';
@@ -115,8 +115,12 @@
     return steps.map(s => ({ val: s * maxPreis, y: scaleY(s * maxPreis) }));
   });
 
-  function fmtEUR(v: number) { return v.toLocaleString('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }); }
-  function fmtNum(v: number) { return v.toLocaleString('de-DE', { maximumFractionDigits: 0 }); }
+  let fmtEUR = $derived.by(() => hideEuro
+    ? (_: number) => '\u2022\u2022\u2022'
+    : (v: number) => v.toLocaleString('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }));
+  let fmtNum = $derived.by(() => hideEuro
+    ? (_: number) => '\u2022\u2022\u2022'
+    : (v: number) => v.toLocaleString('de-DE', { maximumFractionDigits: 0 }));
 
   onMount(() => {
     if (containerEl) {

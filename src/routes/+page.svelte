@@ -168,6 +168,7 @@
   let sortKey = $state<'umsatz' | 'anzahl' | 'avgPreis' | 'name' | 'anteil'>('umsatz');
   let sortDir = $state<'asc' | 'desc'>('desc');
   let lightboxUrl = $state('');
+  let hideEuro = $state(false);
   // Artikel tab state
   let artikelSortMode = $state<'umsatz' | 'anzahl'>('umsatz');
   let artikelHideLow = $state(false);
@@ -443,13 +444,15 @@
     return compGroupLookup.get(field)?.get(name) || null;
   }
 
-  function fmtDelta(cur: number, prev: number): string {
-    if (!prev || prev === 0) return '';
-    const pct = ((cur / prev) - 1) * 100;
-    if (pct > 0) return `(+${pct.toFixed(0)}%)`;
-    if (pct < 0) return `(${pct.toFixed(0)}%)`;
-    return '(±0%)';
-  }
+  let fmtDelta = $derived.by(() => hideEuro
+    ? (_a: number, _b: number) => ''
+    : (cur: number, prev: number) => {
+        if (!prev || prev === 0) return '';
+        const pct = ((cur / prev) - 1) * 100;
+        if (pct > 0) return `(+${pct.toFixed(0)}%)`;
+        if (pct < 0) return `(${pct.toFixed(0)}%)`;
+        return '(\u00b10%)';
+      });
 
   // Custom tab: build dynamically
   let customGroups = $derived.by(() => {
@@ -506,8 +509,12 @@
     const id = typeof bid === 'number' ? Math.round(bid) : bid;
     return `https://konplott-cdn.com/mytism/image/${id}/${id}.jpg?width=${size}&height=${size}&box=true`;
   }
-  function fmtEUR(v: number) { return v.toLocaleString('de-DE', { style: 'currency', currency: 'EUR' }); }
-  function fmtNum(v: number) { return v.toLocaleString('de-DE', { maximumFractionDigits: 0 }); }
+  let fmtEUR = $derived.by(() => hideEuro
+    ? (_: number) => '\u2022\u2022\u2022'
+    : (v: number) => v.toLocaleString('de-DE', { style: 'currency', currency: 'EUR' }));
+  let fmtNum = $derived.by(() => hideEuro
+    ? (_: number) => '\u2022\u2022\u2022'
+    : (v: number) => v.toLocaleString('de-DE', { maximumFractionDigits: 0 }));
   function fmtPct(v: number) { return v.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + ' %'; }
 
   function toggleSet(set: Set<string>, key: string): Set<string> {
@@ -792,6 +799,10 @@
           </p>
         </div>
         <div class="flex items-center gap-3">
+          <button onclick={() => hideEuro = !hideEuro}
+            class="px-2 py-2 rounded-xl transition-all"
+            style="border: 1.5px solid {hideEuro ? 'var(--accent)' : 'var(--warm-200)'}; color: {hideEuro ? 'var(--accent)' : 'var(--warm-300)'}; background: white; font-size: 11px; line-height: 1;"
+            title="Beträge ausblenden">{hideEuro ? '\u20AC\u0338' : '\u20AC'}</button>
           <button onclick={() => { sessionStorage.removeItem('miranda-auth'); sessionStorage.removeItem('miranda-role'); location.reload(); }}
             class="flex items-center gap-1.5 px-3 py-2 text-[10px] font-medium rounded-xl transition-all"
             style="border: 1.5px solid var(--warm-200); color: var(--warm-500); background: white;"
@@ -1024,7 +1035,7 @@
     {#if activeTab === 'dashboard'}
       <div class="max-w-6xl mx-auto px-5 pb-10">
         <Dashboard data={filteredData} compareData={compareData} allData={last30Rows} {timeUnit} {periods}
-          currentLabel={currentPeriodLabel} compareLabel={comparePeriodLabel}
+          currentLabel={currentPeriodLabel} compareLabel={comparePeriodLabel} {hideEuro}
           pickedNrs={new Set(activeItems.keys())} onTogglePick={(art) => {
             const m = new Map(activeItems);
             if (m.has(art.nr)) { m.delete(art.nr); }
@@ -1035,7 +1046,7 @@
     {:else if activeTab === 'bubble'}
       <div class="max-w-6xl mx-auto px-5 pb-10">
         <div class="rounded-2xl p-5" style="background: white; border: 1px solid var(--warm-200); box-shadow: 0 4px 20px rgba(0,0,0,0.03);">
-          <BubbleChart data={filteredData} />
+          <BubbleChart data={filteredData} {hideEuro} />
         </div>
       </div>
     {:else if activeTab === 'bar'}
@@ -1059,7 +1070,7 @@
     {:else if activeTab === 'xtable'}
       <div class="max-w-6xl mx-auto px-5 pb-10">
         <div class="rounded-2xl p-5" style="background: white; border: 1px solid var(--warm-200); box-shadow: 0 4px 20px rgba(0,0,0,0.03);">
-          <XTable data={filteredData} />
+          <XTable data={filteredData} {hideEuro} />
         </div>
       </div>
     {:else if activeTab === 'artikel'}
