@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import BubbleChart from '$lib/BubbleChart.svelte';
   import BarChart from '$lib/BarChart.svelte';
   import PieChart from '$lib/PieChart.svelte';
@@ -46,6 +46,12 @@
   // ─── State ───
   let allDecodedData: RawRow[] = $state([]);
   let allData: RawRow[] = $state([]);
+  let allArtValues: string[] = $state([])
+  let allKollValues: string[] = $state([])
+  let selectedArt = $state<string[]>([])
+  let selectedKollektion = $state<string[]>([])
+  let kollDropdownOpen = $state(false)
+  let kollSearchTerm = $state('')
   let loading = $state(true);
   let activeTab = $state<TabId>('dashboard');
 
@@ -71,11 +77,12 @@
   let preisSubTab = $state<'formpfad' | 'kollektion'>('formpfad');
   let kollSubMode = $state<'artikel' | 'subkollektion'>('artikel');
   // For Custom tab: 4 selectable levels
-  type DimOption = 'Kollektion' | 'FormPfad' | 'Channel' | 'SubKollektion' | 'Form' | 'Preisgruppe' | '';
+  type DimOption = 'Kollektion' | 'FormPfad' | 'Channel' | 'SubKollektion' | 'Form' | 'Preisgruppe' | 'Art' | '';
   const DIM_OPTIONS: { value: DimOption; label: string }[] = [
     { value: '', label: '— keine —' },
     { value: 'Kollektion', label: 'Kollektion' },
     { value: 'FormPfad', label: 'FormPfad' },
+    { value: 'Art', label: 'Art' },
     { value: 'Channel', label: 'Channel' },
     { value: 'SubKollektion', label: 'SubKollektion' },
     { value: 'Form', label: 'Form' },
@@ -108,20 +115,22 @@
     if (timeUnit === 'monat') return availableMonths;
     return availableYears;
   });
+  let periodIndexMap = $derived(new Map(periods.map((p, i) => [p, i])))
   let currentPeriod = $derived(periods.length > 0 ? periods[periods.length - 1 - timeIdx] : '');
   let comparePeriod = $derived.by((): string => {
     if (!currentPeriod || periods.length < 2 || timeUnit === 'alles') return '';
-    const ci = periods.indexOf(currentPeriod);
+    const ci = periodIndexMap.get(currentPeriod) ?? -1;
+    if (ci < 0) return '';
     if (compareType === 'vorperiode') return ci > 0 ? periods[ci - 1] : '';
     // vorjahr: same period key but previous year
     if (compareType === 'vorjahr') {
       if (timeUnit === 'jahr') {
         const prevY = String(Number(currentPeriod) - 1);
-        return periods.includes(prevY) ? prevY : '';
+        return periodIndexMap.has(prevY) ? prevY : '';
       }
       const [y, rest] = currentPeriod.split('-');
       const prevYearKey = `${Number(y) - 1}-${rest}`;
-      return periods.includes(prevYearKey) ? prevYearKey : '';
+      return periodIndexMap.has(prevYearKey) ? prevYearKey : '';
     }
     return '';
   });
@@ -315,13 +324,20 @@
   let totalUmsatz = $derived(filteredData.reduce((s, r) => s + ((r as any).Umsatz || 0), 0));
   let totalAnzahl = $derived(filteredData.reduce((s, r) => s + (r.Anzahl || 0), 0));
 
-  // Cache: only recompute when period changes, not when tab changes
-  let _aggCache = $state<{ period: string; field: string; result: GroupNode[] } | null>(null);
-  function lazyGroupBy(field: string, subFields?: string[]): GroupNode[] {
-    if (_aggCache && _aggCache.period === currentPeriod && _aggCache.field === field) return _aggCache.result;
-    const result = groupByField(filteredData, field, totalUmsatz, subFields);
-    _aggCache = { period: currentPeriod, field, result };
-    return result;
+  // Cache: multi-key, only recompute when period changes
+  let _groupCache = new Map<string, GroupNode[]>()
+  let _groupCachePeriod = ''
+  function cachedGroupBy(field: string, subFields?: string[]): GroupNode[] {
+    if (_groupCachePeriod !== currentPeriod) {
+      _groupCache.clear()
+      _groupCachePeriod = currentPeriod
+    }
+    const key = field + '|' + (subFields?.join(',') || '')
+    const cached = _groupCache.get(key)
+    if (cached) return cached
+    const result = groupByField(filteredData, field, totalUmsatz, subFields)
+    _groupCache.set(key, result)
+    return result
   }
 
   // Legacy compat: agg object for Dashboard & other uses
@@ -336,7 +352,7 @@
   // Pre-filtered data for AreaChart (only last 10 visible periods instead of all 167k)
   let areaChartData = $derived.by(() => {
     if (!allData.length || !currentPeriod || !periods.length) return [];
-    const ci = periods.indexOf(currentPeriod);
+    const ci = periodIndexMap.get(currentPeriod) ?? -1;
     if (ci < 0) return [];
     const start = Math.max(0, ci - 9);
     const visiblePeriods = periods.slice(start, ci + 1);
@@ -350,9 +366,9 @@
     return getRowsForPeriods(last30);
   });
 
-  // All articles for Artikel tab
+  // All articles for Artikel tab (only computed when tab is active)
   let allArticles = $derived.by(() => {
-    if (!filteredData.length) return { items: [] as ArticleNode[], sonstige: null as ArticleNode | null };
+    if (activeTab !== 'artikel' || !filteredData.length) return { items: [] as ArticleNode[], sonstige: null as ArticleNode | null };
     const artMap = new Map<string, { nr: string; kollektion: string; umsatz: number; anzahl: number; kassen: Map<string, number> }>();
     for (const r of filteredData) {
       const bid = String(r.BildId);
@@ -425,44 +441,45 @@
     }).sort((a, b) => artikelSortMode === 'umsatz' ? b.umsatz - a.umsatz : b.anzahl - a.anzahl);
   });
 
-  // Compare L1 lookup for showing (vergleich) in the table
-  let compGroupLookup = $derived.by(() => {
-    const map = new Map<string, Map<string, { umsatz: number; anzahl: number }>>();
-    if (!compareData.length) return map;
-    const fields = ['Kollektion', 'Form', 'Art', 'FormPfad', 'Channel', 'Preisgruppe', 'SubKollektion'] as const;
-    for (const f of fields) map.set(f, new Map());
-    // Single pass: accumulate all 7 fields per row (instead of 7 separate loops)
-    for (const r of compareData) {
-      const an = r.Anzahl || 0;
-      const um = (r as any).Umsatz || 0;
-      for (const f of fields) {
-        const k = (r as any)[f] || '(leer)';
-        const fmap = map.get(f)!;
-        let g = fmap.get(k);
-        if (!g) { g = { umsatz: 0, anzahl: 0 }; fmap.set(k, g); }
-        g.umsatz += um;
-        g.anzahl += an;
-      }
+  // Compare L1 lookup — lazy per-field (only aggregates what's needed for active tab)
+  let _compFieldCache = new Map<string, Map<string, { umsatz: number; anzahl: number }>>()
+  let _compCacheDataRef: RawRow[] = []
+
+  function getCompLookup(field: string): Map<string, { umsatz: number; anzahl: number }> {
+    if (_compCacheDataRef !== compareData) {
+      _compFieldCache.clear()
+      _compCacheDataRef = compareData
     }
-    return map;
-  });
+    const cached = _compFieldCache.get(field)
+    if (cached) return cached
+    const fmap = new Map<string, { umsatz: number; anzahl: number }>()
+    for (const r of compareData) {
+      const k = (r as any)[field] || '(leer)'
+      let g = fmap.get(k)
+      if (!g) { g = { umsatz: 0, anzahl: 0 }; fmap.set(k, g) }
+      g.umsatz += (r as any).Umsatz || 0
+      g.anzahl += r.Anzahl || 0
+    }
+    _compFieldCache.set(field, fmap)
+    return fmap
+  }
 
   // Helper: get L1 compare field for current tab
   function getCompField(): string {
-    if (activeTab === 'kollektion') return 'Kollektion';
-    if (activeTab === 'form') return 'Form';
-    if (activeTab === 'art') return 'Art';
-    if (activeTab === 'formpfad') return 'FormPfad';
-    if (activeTab === 'preis') return 'Preisgruppe';
-    if (activeTab === 'kasse') return 'Channel';
-    if (activeTab === 'custom') return customDim1 || 'Kollektion';
-    return '';
+    if (activeTab === 'kollektion') return 'Kollektion'
+    if (activeTab === 'form') return 'Form'
+    if (activeTab === 'art') return 'Art'
+    if (activeTab === 'formpfad') return 'FormPfad'
+    if (activeTab === 'preis') return 'Preisgruppe'
+    if (activeTab === 'kasse') return 'Channel'
+    if (activeTab === 'custom') return customDim1 || 'Kollektion'
+    return ''
   }
 
   function getComp(name: string): { umsatz: number; anzahl: number } | null {
-    if (!compareData.length) return null;
-    const field = getCompField();
-    return compGroupLookup.get(field)?.get(name) || null;
+    if (!compareData.length) return null
+    const field = getCompField()
+    return getCompLookup(field).get(name) || null
   }
 
   let fmtDelta = $derived.by(() => hideEuro
@@ -492,12 +509,12 @@
     if (!filteredData.length) return [];
     switch (activeTab) {
       case 'kollektion': return kollSubMode === 'subkollektion'
-        ? groupByField(filteredData, 'Kollektion', totalUmsatz, ['SubKollektion'])
-        : groupByField(filteredData, 'Kollektion', totalUmsatz);
-      case 'form': return groupByField(filteredData, 'Form', totalUmsatz, ['Kollektion']);
-      case 'art': return groupByField(filteredData, 'Art', totalUmsatz, ['Kollektion']);
-      case 'formpfad': return groupByField(filteredData, 'FormPfad', totalUmsatz, ['Form', 'Kollektion']);
-      case 'kasse': return groupByField(filteredData, 'Channel', totalUmsatz, ['Kollektion']);
+        ? cachedGroupBy('Kollektion', ['SubKollektion'])
+        : cachedGroupBy('Kollektion');
+      case 'form': return cachedGroupBy('Form', ['Kollektion']);
+      case 'art': return cachedGroupBy('Art', ['Kollektion']);
+      case 'formpfad': return cachedGroupBy('FormPfad', ['Form', 'Kollektion']);
+      case 'kasse': return cachedGroupBy('Channel', ['Kollektion']);
       case 'preis': {
         const preisRanges = ['0 – 20 €', '20 – 50 €', '50 – 120 €', '120 – 250 €', 'über 250 €'];
         const byPreis = new Map<string, RawRow[]>();
@@ -514,7 +531,10 @@
     let list = currentGroups;
     if (searchTerm) {
       const t = searchTerm.toLowerCase();
-      list = list.filter(c => c.name.toLowerCase().includes(t));
+      list = list.filter(c =>
+        c.name.toLowerCase().includes(t) ||
+        c.subGroups?.some(sg => sg.name.toLowerCase().includes(t))
+      );
     }
     list = [...list].sort((a, b) => {
       let cmp: number;
@@ -617,25 +637,38 @@
     return 'Premium (über 250 €)';
   }
 
-  // ─── Reactive allData: role filter + Channel field ───
-  let reactiveAllData: RawRow[] = $derived.by(() => {
-    if (!allDecodedData.length) return []
-    let filtered = allDecodedData
-    // Role filter — only applies to Einzelhandel
+  // ─── Apply role filter + global Art/Kollektion filter + Channel ───
+  function applyFilters(decoded: RawRow[]): RawRow[] {
+    let filtered = decoded
     if (allowedKassen) {
       filtered = filtered.filter(r =>
         r.Quelle !== 'Einzelhandel' || allowedKassen!.includes(r.Kasse)
       )
     }
-    // Channel = Kasse (single source per package)
+    if (selectedArt.length > 0) {
+      const artSet = new Set(selectedArt)
+      filtered = filtered.filter(r => artSet.has(r.Art))
+    }
+    if (selectedKollektion.length > 0) {
+      const kollSet = new Set(selectedKollektion)
+      filtered = filtered.filter(r => kollSet.has(r.Kollektion))
+    }
     for (const r of filtered) {
       ;(r as any).Channel = r.Kasse
     }
     return filtered
-  })
+  }
 
-  // Sync reactiveAllData → allData (keeps existing downstream working)
-  $effect(() => { allData = reactiveAllData })
+  // Re-apply filters when role or global selections change
+  $effect(() => {
+    const _ = allowedKassen
+    const _a = selectedArt.length
+    const _k = selectedKollektion.length
+    const decoded = untrack(() => allDecodedData)
+    if (decoded.length) {
+      allData = applyFilters(decoded)
+    }
+  })
 
   // ─── Period indices (ALL built in a single pass over allData) ───
   let allIndices = $derived.by(() => {
@@ -693,21 +726,28 @@
   }))
   let availableYears = $derived([...yearIdx.keys()].sort())
 
+  // ─── Period row cache (avoids creating new arrays on every call) ───
+  let _periodCache = new Map<string, { dataRef: RawRow[]; tuRef: TimeUnit; result: RawRow[] }>()
+
   function getRowsForPeriod(period: string): RawRow[] {
-    if (timeUnit === 'alles') return allData;
-    const idx = timeUnit === 'woche' ? weekIdx : timeUnit === 'monat' ? monthIdx : timeUnit === 'tag' ? dayIdx : yearIdx;
-    return (idx.get(period) || []).map(i => allData[i]);
+    if (timeUnit === 'alles') return allData
+    const cached = _periodCache.get(period)
+    if (cached && cached.dataRef === allData && cached.tuRef === timeUnit) return cached.result
+    const idx = timeUnit === 'woche' ? weekIdx : timeUnit === 'monat' ? monthIdx : timeUnit === 'tag' ? dayIdx : yearIdx
+    const result = (idx.get(period) || []).map(i => allData[i])
+    _periodCache.set(period, { dataRef: allData, tuRef: timeUnit, result })
+    return result
   }
 
   function getRowsForPeriods(periodList: string[]): RawRow[] {
-    if (timeUnit === 'alles') return allData;
-    const idx = timeUnit === 'woche' ? weekIdx : timeUnit === 'monat' ? monthIdx : timeUnit === 'tag' ? dayIdx : yearIdx;
-    const result: RawRow[] = [];
+    if (timeUnit === 'alles') return allData
+    const idx = timeUnit === 'woche' ? weekIdx : timeUnit === 'monat' ? monthIdx : timeUnit === 'tag' ? dayIdx : yearIdx
+    const result: RawRow[] = []
     for (const p of periodList) {
-      const indices = idx.get(p);
-      if (indices) for (const i of indices) result.push(allData[i]);
+      const indices = idx.get(p)
+      if (indices) for (const i of indices) result.push(allData[i])
     }
-    return result;
+    return result
   }
 
   // ─── Decode helper (shared by initial load + background year loads) ───
@@ -743,20 +783,6 @@
     return decoded;
   }
 
-  // ─── Apply role filter + Channel eagerly ───
-  function applyFilters(decoded: RawRow[]): RawRow[] {
-    let filtered = decoded
-    if (allowedKassen) {
-      filtered = filtered.filter(r =>
-        r.Quelle !== 'Einzelhandel' || allowedKassen!.includes(r.Kasse)
-      )
-    }
-    for (const r of filtered) {
-      ;(r as any).Channel = r.Kasse
-    }
-    return filtered
-  }
-
   // ─── Load a package ───
   async function loadPackage(pkg: PackageInfo) {
     packageLoading = true
@@ -764,6 +790,10 @@
     try {
       const res = await fetch(`/${pkg.file}`)
       const { d, r: rows } = await res.json()
+      allArtValues = (d.A || []).filter(Boolean).sort()
+      allKollValues = (d.L || []).filter(Boolean).sort()
+      selectedArt = []
+      selectedKollektion = []
       allDecodedData = decodeRows(d, rows)
       allData = applyFilters(allDecodedData)
       // Init time navigation to current week
@@ -809,6 +839,8 @@
         // Fallback for older manifests: load full data.json
         const res = await fetch('/data.json')
         const raw = await res.json()
+        allArtValues = (raw.d.A || []).filter(Boolean).sort()
+        allKollValues = (raw.d.L || []).filter(Boolean).sort()
         allDecodedData = decodeRows(raw.d, raw.r)
         allData = applyFilters(allDecodedData)
         // Fake a single package so UI works
@@ -818,6 +850,8 @@
       // No manifest at all: load full data.json
       const res = await fetch('/data.json')
       const raw = await res.json()
+      allArtValues = (raw.d.A || []).filter(Boolean).sort()
+      allKollValues = (raw.d.L || []).filter(Boolean).sort()
       allDecodedData = decodeRows(raw.d, raw.r)
       allData = applyFilters(allDecodedData)
       activePackage = { id: 'legacy', name: 'Alle Daten', source: '', file: 'data.json', rows: allDecodedData.length, from: '', to: '' }
@@ -877,7 +911,7 @@
     { id: 'kollektion', label: 'Kollektionen' },
     { id: 'artikel', label: 'Artikel' },
     { id: 'form', label: 'Form' },
-    { id: 'art', label: 'Typ' },
+    { id: 'art', label: 'Art' },
     { id: 'formpfad', label: 'FormPfad' },
     { id: 'preis', label: 'Preisgruppe' },
     { id: 'kasse', label: 'Channel' },
@@ -1051,6 +1085,89 @@
           <p class="text-[10px] font-semibold" style="color: var(--warm-600);">Heute: {todayLabel}</p>
         </div>
       </div>
+      <!-- Global Art + Kollektion Filter -->
+      {#if allArtValues.length > 0 || allKollValues.length > 0}
+        <div class="flex flex-wrap items-center gap-3 mb-2 py-2.5 rounded-xl px-4" style="background: linear-gradient(135deg, #f0ebe4, var(--warm-100)); border: 1.5px solid var(--warm-200);">
+          {#if allArtValues.length > 0}
+            <div class="flex items-center gap-2">
+              <span class="text-[9px] font-bold uppercase tracking-[0.15em]" style="color: var(--accent);">Art:</span>
+              <div class="flex flex-wrap gap-1">
+                <button onclick={() => selectedArt = []}
+                  class="px-2 py-0.5 text-[10px] font-semibold rounded-full transition-all"
+                  style="background: {selectedArt.length === 0 ? 'var(--accent)' : 'white'}; color: {selectedArt.length === 0 ? 'white' : 'var(--warm-500)'}; border: 1px solid {selectedArt.length === 0 ? 'var(--accent)' : 'var(--warm-200)'};">
+                  Alle
+                </button>
+                {#each allArtValues as art}
+                  <button onclick={() => {
+                    if (selectedArt.includes(art)) {
+                      selectedArt = selectedArt.filter(a => a !== art)
+                    } else {
+                      selectedArt = [...selectedArt, art]
+                    }
+                  }}
+                    class="px-2 py-0.5 text-[10px] font-medium rounded-full transition-all"
+                    style="background: {selectedArt.includes(art) ? 'var(--accent)' : 'white'}; color: {selectedArt.includes(art) ? 'white' : 'var(--warm-500)'}; border: 1px solid {selectedArt.includes(art) ? 'var(--accent)' : 'var(--warm-200)'};">
+                    {art}
+                  </button>
+                {/each}
+              </div>
+            </div>
+          {/if}
+          {#if allKollValues.length > 0}
+            <div class="flex items-center gap-2 ml-1 pl-2" style="border-left: 1.5px solid var(--warm-300);">
+              <span class="text-[9px] font-bold uppercase tracking-[0.15em]" style="color: var(--accent);">Kollektion:</span>
+              <div class="relative">
+                <button onclick={() => kollDropdownOpen = !kollDropdownOpen}
+                  class="px-3 py-1 text-[10px] font-semibold rounded-lg flex items-center gap-1.5"
+                  style="background: {selectedKollektion.length > 0 ? 'var(--accent)' : 'white'}; color: {selectedKollektion.length > 0 ? 'white' : 'var(--warm-500)'}; border: 1px solid {selectedKollektion.length > 0 ? 'var(--accent)' : 'var(--warm-200)'};">
+                  {selectedKollektion.length === 0 ? 'Alle' : selectedKollektion.length === 1 ? selectedKollektion[0] : selectedKollektion.length + ' gewählt'}
+                  <svg width="10" height="10" viewBox="0 0 20 20" fill="currentColor"><path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"/></svg>
+                </button>
+                {#if kollDropdownOpen}
+                  <!-- svelte-ignore a11y_no_static_element_interactions -->
+                  <!-- svelte-ignore a11y_click_events_have_key_events -->
+                  <div class="fixed inset-0 z-40" onclick={() => { kollDropdownOpen = false; kollSearchTerm = '' }}></div>
+                  <div class="absolute top-full left-0 mt-1 rounded-xl shadow-lg z-50 overflow-hidden" style="background: white; border: 1.5px solid var(--warm-200); width: 280px; max-height: 340px;">
+                    <div class="p-2" style="border-bottom: 1px solid var(--warm-100);">
+                      <input type="text" bind:value={kollSearchTerm} placeholder="Suchen…"
+                        class="w-full px-2.5 py-1.5 text-[11px] rounded-lg outline-none"
+                        style="border: 1px solid var(--warm-200); color: var(--warm-700);"
+                        onfocus={(e) => e.currentTarget.style.borderColor = 'var(--accent)'}
+                        onblur={(e) => e.currentTarget.style.borderColor = 'var(--warm-200)'} />
+                    </div>
+                    <div class="flex gap-2 px-2 py-1.5" style="border-bottom: 1px solid var(--warm-100);">
+                      <button onclick={() => { selectedKollektion = [...allKollValues]; }} class="text-[9px] font-medium underline" style="color: var(--accent);">Alle</button>
+                      <button onclick={() => { selectedKollektion = []; }} class="text-[9px] font-medium underline" style="color: var(--warm-400);">Keine</button>
+                    </div>
+                    <div class="overflow-y-auto" style="max-height: 250px;">
+                      {#each allKollValues.filter(k => !kollSearchTerm || k.toLowerCase().includes(kollSearchTerm.toLowerCase())) as koll}
+                        <label class="flex items-center gap-2 px-3 py-1.5 text-[11px] cursor-pointer hover:bg-gray-50" style="color: var(--warm-700);">
+                          <input type="checkbox" checked={selectedKollektion.includes(koll)}
+                            onchange={() => {
+                              if (selectedKollektion.includes(koll)) {
+                                selectedKollektion = selectedKollektion.filter(k => k !== koll)
+                              } else {
+                                selectedKollektion = [...selectedKollektion, koll]
+                              }
+                            }}
+                            class="rounded" style="accent-color: var(--accent);" />
+                          {koll}
+                        </label>
+                      {/each}
+                    </div>
+                  </div>
+                {/if}
+              </div>
+            </div>
+          {/if}
+          {#if selectedArt.length > 0 || selectedKollektion.length > 0}
+            <button onclick={() => { selectedArt = []; selectedKollektion = []; }}
+              class="text-[9px] font-medium underline ml-auto" style="color: var(--warm-400);">
+              Filter zurücksetzen
+            </button>
+          {/if}
+        </div>
+      {/if}
       <!-- Tabs -->
       <div class="flex flex-col gap-0 -mb-px overflow-x-auto">
         <!-- Line 1: Home + Dashboard -->

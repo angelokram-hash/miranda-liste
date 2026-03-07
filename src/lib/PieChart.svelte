@@ -8,8 +8,8 @@
 
   let { data = [] }: { data: RawRow[] } = $props();
 
-  type ValueField = 'Kollektion' | 'FormPfad' | 'Preisgruppe' | 'Channel';
-  type SubField = 'Kollektion' | 'FormPfad' | 'Preisgruppe' | '';
+  type ValueField = 'Kollektion' | 'FormPfad' | 'Preisgruppe' | 'Channel' | 'Art';
+  type SubField = 'Kollektion' | 'FormPfad' | 'Preisgruppe' | 'Art' | '';
 
   let valueField = $state<ValueField>('Kollektion');
   let subField = $state<SubField>('FormPfad');
@@ -124,7 +124,7 @@
     <div>
       <p class="text-[9px] font-semibold uppercase tracking-[0.12em] mb-1.5" style="color: var(--warm-400);">Werte (außen)</p>
       <div class="flex rounded-lg overflow-hidden" style="border: 1px solid var(--warm-200);">
-        {#each (['Kollektion', 'FormPfad', 'Preisgruppe', 'Channel'] as const) as opt, i}
+        {#each (['Kollektion', 'FormPfad', 'Preisgruppe', 'Channel', 'Art'] as const) as opt, i}
           <button onclick={() => valueField = opt}
             class="px-3 py-1.5 text-[11px] font-medium"
             style="background: {valueField === opt ? 'var(--accent)' : 'white'}; color: {valueField === opt ? 'white' : 'var(--warm-500)'}; {i > 0 ? 'border-left: 1px solid var(--warm-200)' : ''};">
@@ -136,7 +136,7 @@
     <div>
       <p class="text-[9px] font-semibold uppercase tracking-[0.12em] mb-1.5" style="color: var(--warm-400);">Unterwerte (innen)</p>
       <div class="flex rounded-lg overflow-hidden" style="border: 1px solid var(--warm-200);">
-        {#each ([['', '— keine —'], ['Kollektion', 'Kollektion'], ['FormPfad', 'FormPfad'], ['Preisgruppe', 'Preisgruppe']] as const) as [val, label], i}
+        {#each ([['', '— keine —'], ['Kollektion', 'Kollektion'], ['FormPfad', 'FormPfad'], ['Preisgruppe', 'Preisgruppe'], ['Art', 'Art']] as const) as [val, label], i}
           <button onclick={() => subField = val as SubField}
             class="px-3 py-1.5 text-[11px] font-medium"
             style="background: {subField === val ? 'var(--accent)' : 'white'}; color: {subField === val ? 'white' : 'var(--warm-500)'}; {i > 0 ? 'border-left: 1px solid var(--warm-200)' : ''};">

@@ -8,9 +8,9 @@
 
   let { data = [], compareData = [] }: { data: RawRow[]; compareData: RawRow[] } = $props();
 
-  type XField = 'Channel' | 'FormPfad' | 'Kollektion' | 'Monat' | 'KW';
+  type XField = 'Channel' | 'FormPfad' | 'Kollektion' | 'Art' | 'Monat' | 'KW';
   type YMode = 'umsatz' | 'anzahl';
-  type StackField = 'FormPfad' | 'Preisgruppe' | 'Channel' | 'Kollektion';
+  type StackField = 'FormPfad' | 'Preisgruppe' | 'Channel' | 'Kollektion' | 'Art';
 
   let xField = $state<XField>('Channel');
   let yMode = $state<YMode>('umsatz');
@@ -152,7 +152,7 @@
     <div>
       <p class="text-[9px] font-semibold uppercase tracking-[0.12em] mb-1.5" style="color: var(--warm-400);">X-Achse</p>
       <div class="flex rounded-lg overflow-hidden" style="border: 1px solid var(--warm-200);">
-        {#each (['Channel', 'FormPfad', 'Kollektion', 'Monat', 'KW'] as const) as opt, i}
+        {#each (['Channel', 'FormPfad', 'Kollektion', 'Art', 'Monat', 'KW'] as const) as opt, i}
           <button onclick={() => xField = opt}
             class="px-3 py-1.5 text-[11px] font-medium"
             style="background: {xField === opt ? 'var(--accent)' : 'white'}; color: {xField === opt ? 'white' : 'var(--warm-500)'}; {i > 0 ? 'border-left: 1px solid var(--warm-200)' : ''};">
@@ -173,7 +173,7 @@
     <div>
       <p class="text-[9px] font-semibold uppercase tracking-[0.12em] mb-1.5" style="color: var(--warm-400);">Stapelung</p>
       <div class="flex rounded-lg overflow-hidden" style="border: 1px solid var(--warm-200);">
-        {#each (['FormPfad', 'Preisgruppe', 'Channel', 'Kollektion'] as const) as opt, i}
+        {#each (['FormPfad', 'Preisgruppe', 'Channel', 'Kollektion', 'Art'] as const) as opt, i}
           <button onclick={() => stackField = opt}
             class="px-3 py-1.5 text-[11px] font-medium"
             style="background: {stackField === opt ? 'var(--accent)' : 'white'}; color: {stackField === opt ? 'white' : 'var(--warm-500)'}; {i > 0 ? 'border-left: 1px solid var(--warm-200)' : ''};">

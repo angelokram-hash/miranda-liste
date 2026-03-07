@@ -218,7 +218,7 @@
           <button onclick={() => valueField = opt}
             class="px-3 py-1.5 text-[11px] font-medium"
             style="background: {valueField === opt ? 'var(--accent)' : 'white'}; color: {valueField === opt ? 'white' : 'var(--warm-500)'}; {i > 0 ? 'border-left: 1px solid var(--warm-200)' : ''};">
-            {opt === 'Art' ? 'Typ' : opt}
+            {opt}
           </button>
         {/each}
       </div>

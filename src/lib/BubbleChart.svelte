@@ -8,7 +8,7 @@
 
   let { data = [], hideEuro = false }: { data: RawRow[]; hideEuro?: boolean } = $props();
 
-  type XField = 'FormPfad' | 'Form' | 'Channel';
+  type XField = 'FormPfad' | 'Form' | 'Channel' | 'Art';
   type ValMode = 'anzahl' | 'umsatz';
 
   let xField = $state<XField>('FormPfad');
@@ -50,6 +50,7 @@
       let key: string;
       if (xField === 'FormPfad') key = getFormPfad(r.Form);
       else if (xField === 'Form') key = r.Form || '(leer)';
+      else if (xField === 'Art') key = r.Art || '(leer)';
       else key = (r as any).Channel || r.Kasse || '(leer)';
 
       if (!groups.has(key)) groups.set(key, { anzahl: 0, umsatz: 0, totalPreis: 0 });
@@ -139,7 +140,7 @@
     <div>
       <p class="text-[9px] font-semibold uppercase tracking-[0.12em] mb-1.5" style="color: var(--warm-400);">X-Achse</p>
       <div class="flex rounded-lg overflow-hidden" style="border: 1px solid var(--warm-200);">
-        {#each (['FormPfad', 'Form', 'Channel'] as const) as opt}
+        {#each (['FormPfad', 'Form', 'Channel', 'Art'] as const) as opt}
           <button onclick={() => xField = opt}
             class="px-3 py-1.5 text-[11px] font-medium"
             style="background: {xField === opt ? 'var(--accent)' : 'white'}; color: {xField === opt ? 'white' : 'var(--warm-500)'}; {opt !== 'FormPfad' ? 'border-left: 1px solid var(--warm-200)' : ''};">
