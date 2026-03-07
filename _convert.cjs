@@ -19,6 +19,14 @@
 const fs = require('fs');
 const path = require('path');
 
+// ─── Auswertungspakete (analysis packages) ───
+const PACKAGES = [
+  { id: 'eh-2025-2026', name: 'Einzelhandel 2025–2026', source: 'Einzelhandel', from: '2025-01-01', to: '2026-12-31' },
+  { id: 'eh-2023-2024', name: 'Einzelhandel 2023–2024', source: 'Einzelhandel', from: '2023-01-01', to: '2024-12-31' },
+  { id: 'gh-2023-mid2024', name: 'Grosshandel 2023 – 06/2024', source: 'Grosshandel', from: '2023-01-01', to: '2024-06-30' },
+  { id: 'gh-mid2024-2026', name: 'Grosshandel 07/2024 – 2026', source: 'Grosshandel', from: '2024-07-01', to: '2026-12-31' },
+];
+
 // --- Parse CLI args ---
 const args = process.argv.slice(2);
 let source = 'Einzelhandel';
@@ -398,35 +406,42 @@ if (output.d.Q) {
   }
 }
 
-// ─── Year-split output ───
-console.log('\n--- Splitting by year ---');
-const rowsByYear = {};
-for (const r of output.r) {
-  const y = r[12].slice(0, 4);
-  if (!rowsByYear[y]) rowsByYear[y] = [];
-  rowsByYear[y].push(r);
-}
-const yearList = Object.keys(rowsByYear).sort();
-console.log('Years:', yearList.join(', '));
+// ─── Package-split output (Auswertungspakete) ───
+console.log('\n--- Splitting into packages ---');
 
-// Dict key indices that are dictionary-encoded (not raw values)
 const DICT_COLS = [
   [0, 'K'], [1, 'L'], [2, 'S'], [3, 'A'], [4, 'N'], [5, 'F'], [6, 'P'], [13, 'Q'],
 ];
-// Raw value columns: 7=BildId, 8=Anzahl, 9=EinzelPreis, 10=Monat, 11=KW, 12=Datum
 
-for (const y of yearList) {
-  const yRows = rowsByYear[y];
+const manifestPackages = [];
 
-  // Collect which dict values are actually used in this year
+for (const pkg of PACKAGES) {
+  // Find source index in master dict
+  const srcIdx = (output.d.Q || []).indexOf(pkg.source);
+  if (srcIdx < 0) {
+    console.log(`  ${pkg.id}: source "${pkg.source}" not found, skipping`);
+    continue;
+  }
+
+  // Filter rows by source + date range
+  const pkgRows = output.r.filter(r =>
+    r[13] === srcIdx && r[12] >= pkg.from && r[12] <= pkg.to
+  );
+
+  if (pkgRows.length === 0) {
+    console.log(`  ${pkg.id}: 0 rows, skipping`);
+    continue;
+  }
+
+  // Collect used dict values
   const usedVals = {};
   for (const [col, key] of DICT_COLS) usedVals[key] = new Set();
-  for (const r of yRows) {
+  for (const r of pkgRows) {
     for (const [col, key] of DICT_COLS) usedVals[key].add(r[col]);
   }
 
-  // Build year-specific dictionaries: old index → new index mapping
-  const yDictArrays = {};
+  // Build package-specific optimized dictionaries
+  const pkgDictArrays = {};
   const remaps = {};
   for (const [col, key] of DICT_COLS) {
     const srcArr = output.d[key];
@@ -437,12 +452,12 @@ for (const y of yearList) {
       oldToNew.set(oldIdx, newArr.length);
       newArr.push(srcArr[oldIdx]);
     }
-    yDictArrays[key] = newArr;
+    pkgDictArrays[key] = newArr;
     remaps[key] = oldToNew;
   }
 
-  // Re-encode rows with year-specific dict indices
-  const reEncoded = yRows.map(r => {
+  // Re-encode rows with package-specific dict indices
+  const reEncoded = pkgRows.map(r => {
     const nr = [...r];
     for (const [col, key] of DICT_COLS) {
       if (remaps[key]) nr[col] = remaps[key].get(r[col]);
@@ -450,17 +465,28 @@ for (const y of yearList) {
     return nr;
   });
 
-  const yearOutput = { d: yDictArrays, r: reEncoded };
-  const yearJson = JSON.stringify(yearOutput);
-  const yearPath = path.join('static', `data-${y}.json`);
-  fs.writeFileSync(yearPath, yearJson);
-  const ySizeMB = (Buffer.byteLength(yearJson) / 1024 / 1024).toFixed(2);
-  const yBrSize = (zlib.brotliCompressSync(yearJson).length / 1024 / 1024).toFixed(2);
-  console.log(`  ${yearPath}: ${yRows.length} rows, ${ySizeMB} MB raw, ${yBrSize} MB Brotli`);
+  const pkgOutput = { d: pkgDictArrays, r: reEncoded };
+  const pkgJson = JSON.stringify(pkgOutput);
+  const pkgFile = `data-${pkg.id}.json`;
+  const pkgPath = path.join('static', pkgFile);
+  fs.writeFileSync(pkgPath, pkgJson);
+  const pSizeMB = (Buffer.byteLength(pkgJson) / 1024 / 1024).toFixed(2);
+  const pBrSize = (zlib.brotliCompressSync(pkgJson).length / 1024 / 1024).toFixed(2);
+  console.log(`  ${pkgPath}: ${pkgRows.length} rows, ${pSizeMB} MB raw, ${pBrSize} MB Brotli`);
+
+  manifestPackages.push({
+    id: pkg.id,
+    name: pkg.name,
+    source: pkg.source,
+    file: pkgFile,
+    rows: pkgRows.length,
+    from: pkg.from,
+    to: pkg.to,
+  });
 }
 
-// Write manifest
-const manifest = { years: yearList, sources: output.d.Q || ['Einzelhandel'] };
+// Write manifest v3
+const manifest = { version: 3, packages: manifestPackages };
 fs.writeFileSync(path.join('static', 'data-manifest.json'), JSON.stringify(manifest));
-console.log(`  static/data-manifest.json written (${yearList.length} years)`);
-console.log('Year-split complete.');
+console.log(`  static/data-manifest.json written (${manifestPackages.length} packages)`);
+console.log('Package-split complete.');

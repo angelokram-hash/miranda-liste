@@ -49,14 +49,23 @@
   let loading = $state(true);
   let activeTab = $state<TabId>('dashboard');
 
-  // ─── Multi-source ───
-  let availableSources: string[] = $state([]);
-  let selectedSources = $state(new Set<string>());
+  // ─── Auswertungspakete (analysis packages) ───
+  interface PackageInfo { id: string; name: string; source: string; file: string; rows: number; from: string; to: string }
+  let packages = $state<PackageInfo[]>([]);
+  let activePackage = $state<PackageInfo | null>(null);
+  let packageLoading = $state(false);
 
-  // ─── Incremental year loading ───
-  let loadedYears = $state(new Set<string>());
-  let loadingYears = $state(new Set<string>());
-  let allAvailableYears = $state<string[]>([]);
+  const ROLE_PACKAGES: Record<string, string[]> = {
+    'all': ['*'],
+    'nrw': ['eh-2025-2026'],
+    'koblenz': ['eh-2025-2026'],
+    'frankfurt': ['eh-2025-2026'],
+  };
+  let allowedPackages = $derived(
+    ROLE_PACKAGES[userRole]?.[0] === '*'
+      ? packages
+      : packages.filter(p => (ROLE_PACKAGES[userRole] || []).includes(p.id))
+  );
 
   // Pre-aggregated data — all derived, no $effect needed
   let preisSubTab = $state<'formpfad' | 'kollektion'>('formpfad');
@@ -80,7 +89,7 @@
   const MONAT_ORDER = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
 
   // ── Unified time navigation ──
-  type TimeUnit = 'tag' | 'woche' | 'monat' | 'jahr';
+  type TimeUnit = 'tag' | 'woche' | 'monat' | 'jahr' | 'alles';
   type CompareType = 'vorperiode' | 'vorjahr';
   let timeUnit = $state<TimeUnit>('woche');
   let timeIdx = $state(0); // 0 = latest period
@@ -93,6 +102,7 @@
   const todayLabel = `${_now.getDate().toString().padStart(2,'0')}.${(_now.getMonth()+1).toString().padStart(2,'0')}.${_now.getFullYear()} · ${MONAT_ORDER[_now.getMonth()]} · KW ${_kw}`;
 
   let periods = $derived.by((): string[] => {
+    if (timeUnit === 'alles') return ['alles'];
     if (timeUnit === 'tag') return availableDates;
     if (timeUnit === 'woche') return availableKWs;
     if (timeUnit === 'monat') return availableMonths;
@@ -100,7 +110,7 @@
   });
   let currentPeriod = $derived(periods.length > 0 ? periods[periods.length - 1 - timeIdx] : '');
   let comparePeriod = $derived.by((): string => {
-    if (!currentPeriod || periods.length < 2) return '';
+    if (!currentPeriod || periods.length < 2 || timeUnit === 'alles') return '';
     const ci = periods.indexOf(currentPeriod);
     if (compareType === 'vorperiode') return ci > 0 ? periods[ci - 1] : '';
     // vorjahr: same period key but previous year
@@ -117,6 +127,7 @@
   });
   let currentPeriodLabel = $derived.by((): string => {
     if (!currentPeriod) return '';
+    if (timeUnit === 'alles') return 'Alle Daten';
     if (timeUnit === 'tag') { const [y, m, d] = currentPeriod.split('-'); return `${d}.${m}.${y}`; }
     if (timeUnit === 'woche') { const [y, k] = currentPeriod.split('-'); return `KW ${k} · ${y}`; }
     if (timeUnit === 'monat') { const [y, m] = currentPeriod.split('-'); return `${m} ${y}`; }
@@ -141,7 +152,7 @@
     return `${d}.${m}.${y}`;
   }
   let currentDateRange = $derived.by((): string => {
-    if (!currentPeriod || timeUnit === 'tag') return '';
+    if (!currentPeriod || timeUnit === 'tag' || timeUnit === 'alles') return '';
     const range = periodDateRange.get(currentPeriod);
     if (!range) return '';
     return `${fmtDateShort(range.min)} – ${fmtDateShort(range.max)}`;
@@ -606,32 +617,19 @@
     return 'Premium (über 250 €)';
   }
 
-  // ─── Source toggle ───
-  function toggleSource(src: string) {
-    const next = new Set(selectedSources)
-    if (next.has(src)) {
-      if (next.size > 1) next.delete(src) // must keep at least 1
-    } else {
-      next.add(src)
-    }
-    selectedSources = next
-  }
-
-  // ─── Reactive allData: source filter + role filter + Channel field ───
+  // ─── Reactive allData: role filter + Channel field ───
   let reactiveAllData: RawRow[] = $derived.by(() => {
-    if (!allDecodedData.length || !selectedSources.size) return []
-    // 1. Source filter
-    let filtered = allDecodedData.filter(r => selectedSources.has(r.Quelle))
-    // 2. Role filter — only applies to Einzelhandel
+    if (!allDecodedData.length) return []
+    let filtered = allDecodedData
+    // Role filter — only applies to Einzelhandel
     if (allowedKassen) {
       filtered = filtered.filter(r =>
         r.Quelle !== 'Einzelhandel' || allowedKassen!.includes(r.Kasse)
       )
     }
-    // 3. Compute Channel field
-    const multi = selectedSources.size > 1
+    // Channel = Kasse (single source per package)
     for (const r of filtered) {
-      ;(r as any).Channel = multi ? r.Quelle : r.Kasse
+      ;(r as any).Channel = r.Kasse
     }
     return filtered
   })
@@ -696,11 +694,13 @@
   let availableYears = $derived([...yearIdx.keys()].sort())
 
   function getRowsForPeriod(period: string): RawRow[] {
+    if (timeUnit === 'alles') return allData;
     const idx = timeUnit === 'woche' ? weekIdx : timeUnit === 'monat' ? monthIdx : timeUnit === 'tag' ? dayIdx : yearIdx;
     return (idx.get(period) || []).map(i => allData[i]);
   }
 
   function getRowsForPeriods(periodList: string[]): RawRow[] {
+    if (timeUnit === 'alles') return allData;
     const idx = timeUnit === 'woche' ? weekIdx : timeUnit === 'monat' ? monthIdx : timeUnit === 'tag' ? dayIdx : yearIdx;
     const result: RawRow[] = [];
     for (const p of periodList) {
@@ -743,147 +743,133 @@
     return decoded;
   }
 
-  // ─── Apply source + role filter + Channel eagerly ───
+  // ─── Apply role filter + Channel eagerly ───
   function applyFilters(decoded: RawRow[]): RawRow[] {
-    const multi = selectedSources.size > 1;
-    let filtered = decoded.filter(r => selectedSources.has(r.Quelle));
+    let filtered = decoded
     if (allowedKassen) {
       filtered = filtered.filter(r =>
         r.Quelle !== 'Einzelhandel' || allowedKassen!.includes(r.Kasse)
-      );
+      )
     }
     for (const r of filtered) {
-      ;(r as any).Channel = multi ? r.Quelle : r.Kasse;
+      ;(r as any).Channel = r.Kasse
     }
-    return filtered;
+    return filtered
   }
 
-  // ─── Load additional year in background ───
-  async function loadYear(year: string) {
-    if (loadedYears.has(year) || loadingYears.has(year)) return;
-    loadingYears = new Set([...loadingYears, year]);
+  // ─── Load a package ───
+  async function loadPackage(pkg: PackageInfo) {
+    packageLoading = true
+    activePackage = pkg
     try {
-      const res = await fetch(`/data-${year}.json`);
-      if (!res.ok) return;
-      const { d, r: rows } = await res.json();
-      const decoded = decodeRows(d, rows);
-      // Merge into allDecodedData
-      allDecodedData = [...allDecodedData, ...decoded];
-      // Eagerly recompute allData (same reason as onMount: $effect is async)
-      allData = applyFilters(allDecodedData);
-      loadedYears = new Set([...loadedYears, year]);
+      const res = await fetch(`/${pkg.file}`)
+      const { d, r: rows } = await res.json()
+      allDecodedData = decodeRows(d, rows)
+      allData = applyFilters(allDecodedData)
+      // Init time navigation to current week
+      const now = new Date()
+      const currentYear = String(now.getFullYear())
+      const oneJan = new Date(now.getFullYear(), 0, 1)
+      const currentKW = String(Math.ceil(((now.getTime() - oneJan.getTime()) / 86400000 + oneJan.getDay() + 1) / 7)).padStart(2, '0')
+      const currentYearKW = `${currentYear}-${currentKW}`
+      timeUnit = 'woche'
+      const kwI = availableKWs.indexOf(currentYearKW)
+      if (kwI >= 0) {
+        timeIdx = availableKWs.length - 1 - kwI
+      } else {
+        timeIdx = 0
+      }
     } finally {
-      const next = new Set(loadingYears);
-      next.delete(year);
-      loadingYears = next;
+      packageLoading = false
     }
   }
 
-  // ─── Auto-load year when user navigates to an unloaded period ───
-  $effect(() => {
-    if (!currentPeriod || !allAvailableYears.length) return;
-    const neededYear = currentPeriod.split('-')[0];
-    if (neededYear && allAvailableYears.includes(neededYear) && !loadedYears.has(neededYear)) {
-      loadYear(neededYear);
-    }
-  });
+  // ─── Switch back to package selection ───
+  function switchPackage() {
+    activePackage = null
+    allDecodedData = []
+    allData = []
+    activeTab = 'dashboard'
+  }
 
   onMount(async () => {
     // Read role from sessionStorage
-    const role = sessionStorage.getItem('miranda-role') || 'all';
-    userRole = role;
+    const role = sessionStorage.getItem('miranda-role') || 'all'
+    userRole = role
 
-    // Try year-split loading first (manifest + current year only)
-    let decoded: RawRow[];
-    let manifestSources: string[] | null = null;
+    // Load manifest
     try {
-      const mRes = await fetch('/data-manifest.json');
-      if (!mRes.ok) throw new Error('no manifest');
-      const manifest = await mRes.json();
-      allAvailableYears = manifest.years || [];
-      manifestSources = manifest.sources || null;
+      const mRes = await fetch('/data-manifest.json')
+      if (!mRes.ok) throw new Error('no manifest')
+      const manifest = await mRes.json()
 
-      // Determine which year to load first
-      const now = new Date();
-      const currentYear = String(now.getFullYear());
-      const firstYear = allAvailableYears.includes(currentYear)
-        ? currentYear
-        : allAvailableYears[allAvailableYears.length - 1] || currentYear;
-
-      // Load current year
-      const yRes = await fetch(`/data-${firstYear}.json`);
-      const { d, r: rows } = await yRes.json();
-      decoded = decodeRows(d, rows);
-      loadedYears = new Set([firstYear]);
+      if (manifest.version >= 3 && manifest.packages) {
+        packages = manifest.packages
+      } else {
+        // Fallback for older manifests: load full data.json
+        const res = await fetch('/data.json')
+        const raw = await res.json()
+        allDecodedData = decodeRows(raw.d, raw.r)
+        allData = applyFilters(allDecodedData)
+        // Fake a single package so UI works
+        activePackage = { id: 'legacy', name: 'Alle Daten', source: '', file: 'data.json', rows: allDecodedData.length, from: '', to: '' }
+      }
     } catch {
-      // Fallback: load full data.json
-      const res = await fetch('/data.json');
-      const raw = await res.json();
-      decoded = decodeRows(raw.d, raw.r);
-      const years = [...new Set(decoded.map(r => (r as any).Jahr as string))].sort();
-      allAvailableYears = years;
-      loadedYears = new Set(years);
+      // No manifest at all: load full data.json
+      const res = await fetch('/data.json')
+      const raw = await res.json()
+      allDecodedData = decodeRows(raw.d, raw.r)
+      allData = applyFilters(allDecodedData)
+      activePackage = { id: 'legacy', name: 'Alle Daten', source: '', file: 'data.json', rows: allDecodedData.length, from: '', to: '' }
     }
 
-    // Detect available sources and select all by default
-    const sources = manifestSources || [...new Set(decoded.map(r => r.Quelle))].sort();
-    availableSources = sources;
-    selectedSources = new Set(sources);
+    // If only one allowed package, auto-load it
+    if (!activePackage && allowedPackages.length === 1) {
+      await loadPackage(allowedPackages[0])
+    }
 
-    // Store decoded data — reactive pipeline handles filtering
-    allDecodedData = decoded;
-
-    // Eagerly compute allData (same as before: $effect is async)
-    allData = applyFilters(decoded);
-
-    // Default: current KW in current year
-    const now = new Date();
-    const currentYear = String(now.getFullYear());
-    const oneJan = new Date(now.getFullYear(), 0, 1);
-    const currentKW = String(Math.ceil(((now.getTime() - oneJan.getTime()) / 86400000 + oneJan.getDay() + 1) / 7)).padStart(2, '0');
-    const currentYearKW = `${currentYear}-${currentKW}`;
-    timeUnit = 'woche';
-    const kwI = availableKWs.indexOf(currentYearKW);
-    if (kwI >= 0) {
-      timeIdx = availableKWs.length - 1 - kwI;
-    } else {
-      timeIdx = 0;
+    // Default time unit
+    if (activePackage) {
+      const now = new Date()
+      const currentYear = String(now.getFullYear())
+      const oneJan = new Date(now.getFullYear(), 0, 1)
+      const currentKW = String(Math.ceil(((now.getTime() - oneJan.getTime()) / 86400000 + oneJan.getDay() + 1) / 7)).padStart(2, '0')
+      const currentYearKW = `${currentYear}-${currentKW}`
+      timeUnit = 'woche'
+      const kwI = availableKWs.indexOf(currentYearKW)
+      if (kwI >= 0) {
+        timeIdx = availableKWs.length - 1 - kwI
+      } else {
+        timeIdx = 0
+      }
     }
 
     // ─── Pick & Share: restore from localStorage + hash ───
     try { const stored = localStorage.getItem('miranda-picks'); if (stored) savedLists = JSON.parse(stored); } catch {}
-    if (location.hash.includes('pick=')) {
-      const params = new URLSearchParams(location.hash.slice(1));
-      const hashName = decodeURIComponent(params.get('pick') || 'Liste');
-      const hashNrs = (params.get('nrs') || '').split(',').filter(Boolean);
+    if (location.hash.includes('pick=') && allData.length) {
+      const params = new URLSearchParams(location.hash.slice(1))
+      const hashName = decodeURIComponent(params.get('pick') || 'Liste')
+      const hashNrs = (params.get('nrs') || '').split(',').filter(Boolean)
       if (hashNrs.length) {
-        const nrLookup = new Map<string, { bildId: string; kollektion: string; einzelPreis: number }>();
+        const nrLookup = new Map<string, { bildId: string; kollektion: string; einzelPreis: number }>()
         for (const r of allData) {
-          const nr = String(r.Nr);
-          if (nr && !nrLookup.has(nr)) nrLookup.set(nr, { bildId: String(r.BildId), kollektion: r.Kollektion || '', einzelPreis: Number(r.EinzelPreis) || 0 });
+          const nr = String(r.Nr)
+          if (nr && !nrLookup.has(nr)) nrLookup.set(nr, { bildId: String(r.BildId), kollektion: r.Kollektion || '', einzelPreis: Number(r.EinzelPreis) || 0 })
         }
-        const m = new Map<string, PickItem>();
+        const m = new Map<string, PickItem>()
         for (const nr of hashNrs) {
-          const info = nrLookup.get(nr);
-          if (info) m.set(nr, { nr, bildId: info.bildId, kollektion: info.kollektion, einzelPreis: info.einzelPreis });
-          else m.set(nr, { nr, bildId: '', kollektion: '', einzelPreis: 0 });
+          const info = nrLookup.get(nr)
+          if (info) m.set(nr, { nr, bildId: info.bildId, kollektion: info.kollektion, einzelPreis: info.einzelPreis })
+          else m.set(nr, { nr, bildId: '', kollektion: '', einzelPreis: 0 })
         }
-        activeItems = m;
-        activeListName = hashName;
-        pickPanelOpen = true;
-        history.replaceState(null, '', location.pathname);
+        activeItems = m
+        activeListName = hashName
+        pickPanelOpen = true
+        history.replaceState(null, '', location.pathname)
       }
     }
 
-    loading = false;
-
-    // Background-load remaining years (newest first, skip already loaded)
-    const remainingYears = [...allAvailableYears]
-      .filter(y => !loadedYears.has(y))
-      .sort((a, b) => b.localeCompare(a)); // newest first
-    for (const y of remainingYears) {
-      await loadYear(y);
-    }
+    loading = false
   });
 
   const HOME_TAB: { id: TabId; label: string } = { id: 'dashboard', label: 'Dashboard' };
@@ -906,6 +892,39 @@
   ];
 </script>
 
+{#if !activePackage && !loading && packages.length > 0}
+  <!-- Package Selection Page -->
+  <div class="min-h-screen flex items-center justify-center" style="background: var(--warm-50);">
+    <div class="w-full max-w-2xl px-6">
+      <div class="text-center mb-10">
+        <h1 class="text-4xl font-semibold tracking-tight" style="font-family: var(--font-display); color: var(--warm-800);">Mirandas Liste</h1>
+        <div class="w-12 h-0.5 mx-auto mt-4 mb-3" style="background: var(--accent);"></div>
+        <p class="text-sm" style="font-family: var(--font-body); color: var(--warm-400);">Auswertungspaket wählen</p>
+        {#if roleLabel}<p class="text-xs mt-2" style="color: var(--warm-500);"><span class="px-2 py-0.5 rounded-full text-[9px] font-semibold" style="background: var(--accent); color: white;">{roleLabel}</span></p>{/if}
+      </div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {#each allowedPackages as pkg}
+          <button onclick={() => loadPackage(pkg)}
+            class="rounded-2xl p-6 text-left shadow-lg transition-all group cursor-pointer"
+            style="background: white; border: 2px solid var(--warm-200);"
+            onmouseenter={(e) => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.boxShadow = '0 8px 24px rgba(176,124,62,0.15)'; }}
+            onmouseleave={(e) => { e.currentTarget.style.borderColor = 'var(--warm-200)'; e.currentTarget.style.boxShadow = '0 4px 6px -1px rgba(0,0,0,0.1)'; }}>
+            <h3 class="text-sm font-bold mb-2" style="color: var(--warm-800); font-family: var(--font-heading);">{pkg.name}</h3>
+            <p class="text-[11px] font-medium" style="color: var(--accent);">{pkg.rows.toLocaleString('de-DE')} Datensätze</p>
+            <p class="text-[10px] mt-1" style="color: var(--warm-400);">{pkg.from} – {pkg.to}</p>
+          </button>
+        {/each}
+      </div>
+      {#if packageLoading}
+        <p class="text-center mt-6 text-sm animate-pulse" style="color: var(--accent);">Lade Daten…</p>
+      {/if}
+      <div class="text-center mt-8">
+        <button onclick={() => { sessionStorage.removeItem('miranda-auth'); sessionStorage.removeItem('miranda-role'); location.reload(); }}
+          class="text-[10px] font-medium underline" style="color: var(--warm-400);">Abmelden</button>
+      </div>
+    </div>
+  </div>
+{:else}
 <div class="min-h-screen" style="background: var(--warm-50);">
   <!-- Header -->
   <header class="sticky top-0 z-40 backdrop-blur-xl" style="background: rgba(250,248,245,0.85); border-bottom: 1px solid var(--warm-200);">
@@ -982,7 +1001,7 @@
         <div class="flex items-center gap-2">
           <span class="text-[9px] font-bold uppercase tracking-[0.15em]" style="color: var(--accent);">Zeitraum:</span>
           <div class="flex rounded-lg overflow-hidden" style="border: 1px solid var(--warm-200);">
-            {#each ([['tag','Tag'],['woche','Woche'],['monat','Monat'],['jahr','Jahr']] as const) as [val, label], pi}
+            {#each ([['tag','Tag'],['woche','Woche'],['monat','Monat'],['jahr','Jahr'],['alles','Alles']] as const) as [val, label], pi}
               <button onclick={() => switchTimeUnit(val)} class="px-3 py-1 text-[10px] font-semibold"
                 style="background: {timeUnit === val ? 'var(--accent)' : 'white'}; color: {timeUnit === val ? 'white' : 'var(--warm-500)'}; {pi > 0 ? 'border-left: 1px solid var(--warm-200)' : ''};">{label}</button>
             {/each}
@@ -1016,25 +1035,17 @@
             Vgl: {compTotalAnzahl > 0 ? fmtNum(compTotalAnzahl) + ' Stk' : 'keine Daten'}
           </span>
         {/if}
-        {#if availableSources.length > 1}
+        {#if activePackage}
           <div class="flex items-center gap-2 ml-1 pl-2" style="border-left: 1.5px solid var(--warm-300);">
-            <span class="text-[9px] font-bold uppercase tracking-[0.12em]" style="color: var(--accent);">Quelle:</span>
-            <div class="flex gap-1">
-              {#each availableSources as src}
-                {@const active = selectedSources.has(src)}
-                <button onclick={() => toggleSource(src)}
-                  class="px-2.5 py-1 text-[10px] font-semibold rounded-full transition-all"
-                  style="border: 1.5px solid {active ? 'var(--accent)' : 'var(--warm-200)'}; color: {active ? 'white' : 'var(--warm-400)'}; background: {active ? 'var(--accent)' : 'white'};">
-                  {src}
-                </button>
-              {/each}
-            </div>
+            <span class="text-[9px] font-bold uppercase tracking-[0.12em]" style="color: var(--accent);">Paket:</span>
+            <span class="px-2.5 py-1 text-[10px] font-semibold rounded-full" style="border: 1.5px solid var(--accent); color: white; background: var(--accent);">{activePackage.name}</span>
+            {#if allowedPackages.length > 1}
+              <button onclick={switchPackage} class="text-[9px] font-medium underline" style="color: var(--warm-400);">wechseln</button>
+            {/if}
           </div>
         {/if}
-        {#if loadingYears.size > 0}
-          <span class="text-[9px] animate-pulse ml-1" style="color: var(--warm-400);">Lade {[...loadingYears].join(', ')}…</span>
-        {:else if loadedYears.size > 0 && loadedYears.size < allAvailableYears.length}
-          <span class="text-[9px] ml-1" style="color: var(--warm-300);">{loadedYears.size}/{allAvailableYears.length} Jahre</span>
+        {#if packageLoading}
+          <span class="text-[9px] animate-pulse ml-1" style="color: var(--warm-400);">Lade…</span>
         {/if}
         <div class="ml-auto text-right">
           <p class="text-[10px] font-semibold" style="color: var(--warm-600);">Heute: {todayLabel}</p>
@@ -1739,4 +1750,5 @@
         title="Liste leeren">Leeren</button>
     </div>
   </div>
+{/if}
 {/if}

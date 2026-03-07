@@ -7,7 +7,7 @@
     Datum: string;
   }
 
-  type TimeUnit = 'tag' | 'woche' | 'monat' | 'jahr';
+  type TimeUnit = 'tag' | 'woche' | 'monat' | 'jahr' | 'alles';
 
   let { data = [], timeUnit = 'woche' as TimeUnit, currentPeriod = '', periods = [] as string[] }:
     { data: RawRow[]; timeUnit?: TimeUnit; currentPeriod?: string; periods?: string[] } = $props();
