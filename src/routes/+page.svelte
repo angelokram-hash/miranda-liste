@@ -52,6 +52,7 @@
   let selectedKollektion = $state<string[]>([])
   let kollDropdownOpen = $state(false)
   let kollSearchTerm = $state('')
+  let filterOpen = $state(false)
   let loading = $state(true);
   let activeTab = $state<TabId>('dashboard');
 
@@ -1085,86 +1086,104 @@
           <p class="text-[10px] font-semibold" style="color: var(--warm-600);">Heute: {todayLabel}</p>
         </div>
       </div>
-      <!-- Global Art + Kollektion Filter -->
+      <!-- Global Art + Kollektion Filter (collapsible) -->
       {#if allArtValues.length > 0 || allKollValues.length > 0}
-        <div class="flex flex-wrap items-center gap-3 mb-2 py-2.5 rounded-xl px-4" style="background: linear-gradient(135deg, #f0ebe4, var(--warm-100)); border: 1.5px solid var(--warm-200);">
-          {#if allArtValues.length > 0}
-            <div class="flex items-center gap-2">
-              <span class="text-[9px] font-bold uppercase tracking-[0.15em]" style="color: var(--accent);">Art:</span>
-              <div class="flex flex-wrap gap-1">
-                <button onclick={() => selectedArt = []}
-                  class="px-2 py-0.5 text-[10px] font-semibold rounded-full transition-all"
-                  style="background: {selectedArt.length === 0 ? 'var(--accent)' : 'white'}; color: {selectedArt.length === 0 ? 'white' : 'var(--warm-500)'}; border: 1px solid {selectedArt.length === 0 ? 'var(--accent)' : 'var(--warm-200)'};">
-                  Alle
-                </button>
-                {#each allArtValues as art}
-                  <button onclick={() => {
-                    if (selectedArt.includes(art)) {
-                      selectedArt = selectedArt.filter(a => a !== art)
-                    } else {
-                      selectedArt = [...selectedArt, art]
-                    }
-                  }}
-                    class="px-2 py-0.5 text-[10px] font-medium rounded-full transition-all"
-                    style="background: {selectedArt.includes(art) ? 'var(--accent)' : 'white'}; color: {selectedArt.includes(art) ? 'white' : 'var(--warm-500)'}; border: 1px solid {selectedArt.includes(art) ? 'var(--accent)' : 'var(--warm-200)'};">
-                    {art}
-                  </button>
-                {/each}
-              </div>
-            </div>
-          {/if}
-          {#if allKollValues.length > 0}
-            <div class="flex items-center gap-2 ml-1 pl-2" style="border-left: 1.5px solid var(--warm-300);">
-              <span class="text-[9px] font-bold uppercase tracking-[0.15em]" style="color: var(--accent);">Kollektion:</span>
-              <div class="relative">
-                <button onclick={() => kollDropdownOpen = !kollDropdownOpen}
-                  class="px-3 py-1 text-[10px] font-semibold rounded-lg flex items-center gap-1.5"
-                  style="background: {selectedKollektion.length > 0 ? 'var(--accent)' : 'white'}; color: {selectedKollektion.length > 0 ? 'white' : 'var(--warm-500)'}; border: 1px solid {selectedKollektion.length > 0 ? 'var(--accent)' : 'var(--warm-200)'};">
-                  {selectedKollektion.length === 0 ? 'Alle' : selectedKollektion.length === 1 ? selectedKollektion[0] : selectedKollektion.length + ' gewählt'}
-                  <svg width="10" height="10" viewBox="0 0 20 20" fill="currentColor"><path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"/></svg>
-                </button>
-                {#if kollDropdownOpen}
-                  <!-- svelte-ignore a11y_no_static_element_interactions -->
-                  <!-- svelte-ignore a11y_click_events_have_key_events -->
-                  <div class="fixed inset-0 z-40" onclick={() => { kollDropdownOpen = false; kollSearchTerm = '' }}></div>
-                  <div class="absolute top-full left-0 mt-1 rounded-xl shadow-lg z-50 overflow-hidden" style="background: white; border: 1.5px solid var(--warm-200); width: 280px; max-height: 340px;">
-                    <div class="p-2" style="border-bottom: 1px solid var(--warm-100);">
-                      <input type="text" bind:value={kollSearchTerm} placeholder="Suchen…"
-                        class="w-full px-2.5 py-1.5 text-[11px] rounded-lg outline-none"
-                        style="border: 1px solid var(--warm-200); color: var(--warm-700);"
-                        onfocus={(e) => e.currentTarget.style.borderColor = 'var(--accent)'}
-                        onblur={(e) => e.currentTarget.style.borderColor = 'var(--warm-200)'} />
-                    </div>
-                    <div class="flex gap-2 px-2 py-1.5" style="border-bottom: 1px solid var(--warm-100);">
-                      <button onclick={() => { selectedKollektion = [...allKollValues]; }} class="text-[9px] font-medium underline" style="color: var(--accent);">Alle</button>
-                      <button onclick={() => { selectedKollektion = []; }} class="text-[9px] font-medium underline" style="color: var(--warm-400);">Keine</button>
-                    </div>
-                    <div class="overflow-y-auto" style="max-height: 250px;">
-                      {#each allKollValues.filter(k => !kollSearchTerm || k.toLowerCase().includes(kollSearchTerm.toLowerCase())) as koll}
-                        <label class="flex items-center gap-2 px-3 py-1.5 text-[11px] cursor-pointer hover:bg-gray-50" style="color: var(--warm-700);">
-                          <input type="checkbox" checked={selectedKollektion.includes(koll)}
-                            onchange={() => {
-                              if (selectedKollektion.includes(koll)) {
-                                selectedKollektion = selectedKollektion.filter(k => k !== koll)
-                              } else {
-                                selectedKollektion = [...selectedKollektion, koll]
-                              }
-                            }}
-                            class="rounded" style="accent-color: var(--accent);" />
-                          {koll}
-                        </label>
-                      {/each}
-                    </div>
+        <div class="mb-2 rounded-xl overflow-hidden" style="background: linear-gradient(135deg, #f0ebe4, var(--warm-100)); border: 1.5px solid var(--warm-200);">
+          <button onclick={() => filterOpen = !filterOpen}
+            class="w-full flex items-center gap-2 px-4 py-2 cursor-pointer"
+            style="color: var(--warm-600);">
+            <svg width="12" height="12" viewBox="0 0 20 20" fill="currentColor"
+              class="transition-transform duration-200" style="transform: rotate({filterOpen ? '180deg' : '0deg'});">
+              <path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"/>
+            </svg>
+            <span class="text-[10px] font-bold uppercase tracking-[0.12em]" style="color: var(--accent);">Globale Selektion</span>
+            {#if selectedArt.length > 0 || selectedKollektion.length > 0}
+              <span class="text-[9px] font-medium px-2 py-0.5 rounded-full" style="background: var(--accent); color: white;">
+                {selectedArt.length + selectedKollektion.length} aktiv
+              </span>
+            {/if}
+          </button>
+          {#if filterOpen}
+            <div class="flex flex-wrap items-center gap-3 px-4 pb-2.5">
+              {#if allArtValues.length > 0}
+                <div class="flex items-center gap-2">
+                  <span class="text-[9px] font-bold uppercase tracking-[0.15em]" style="color: var(--accent);">Art:</span>
+                  <div class="flex flex-wrap gap-1">
+                    <button onclick={() => selectedArt = []}
+                      class="px-2 py-0.5 text-[10px] font-semibold rounded-full transition-all"
+                      style="background: {selectedArt.length === 0 ? 'var(--accent)' : 'white'}; color: {selectedArt.length === 0 ? 'white' : 'var(--warm-500)'}; border: 1px solid {selectedArt.length === 0 ? 'var(--accent)' : 'var(--warm-200)'};">
+                      Alle
+                    </button>
+                    {#each allArtValues as art}
+                      <button onclick={() => {
+                        if (selectedArt.includes(art)) {
+                          selectedArt = selectedArt.filter(a => a !== art)
+                        } else {
+                          selectedArt = [...selectedArt, art]
+                        }
+                      }}
+                        class="px-2 py-0.5 text-[10px] font-medium rounded-full transition-all"
+                        style="background: {selectedArt.includes(art) ? 'var(--accent)' : 'white'}; color: {selectedArt.includes(art) ? 'white' : 'var(--warm-500)'}; border: 1px solid {selectedArt.includes(art) ? 'var(--accent)' : 'var(--warm-200)'};">
+                        {art}
+                      </button>
+                    {/each}
                   </div>
-                {/if}
-              </div>
+                </div>
+              {/if}
+              {#if allKollValues.length > 0}
+                <div class="flex items-center gap-2 ml-1 pl-2" style="border-left: 1.5px solid var(--warm-300);">
+                  <span class="text-[9px] font-bold uppercase tracking-[0.15em]" style="color: var(--accent);">Kollektion:</span>
+                  <div class="relative">
+                    <button onclick={() => kollDropdownOpen = !kollDropdownOpen}
+                      class="px-3 py-1 text-[10px] font-semibold rounded-lg flex items-center gap-1.5"
+                      style="background: {selectedKollektion.length > 0 ? 'var(--accent)' : 'white'}; color: {selectedKollektion.length > 0 ? 'white' : 'var(--warm-500)'}; border: 1px solid {selectedKollektion.length > 0 ? 'var(--accent)' : 'var(--warm-200)'};">
+                      {selectedKollektion.length === 0 ? 'Alle' : selectedKollektion.length === 1 ? selectedKollektion[0] : selectedKollektion.length + ' gewählt'}
+                      <svg width="10" height="10" viewBox="0 0 20 20" fill="currentColor"><path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"/></svg>
+                    </button>
+                    {#if kollDropdownOpen}
+                      <!-- svelte-ignore a11y_no_static_element_interactions -->
+                      <!-- svelte-ignore a11y_click_events_have_key_events -->
+                      <div class="fixed inset-0 z-40" onclick={() => { kollDropdownOpen = false; kollSearchTerm = '' }}></div>
+                      <div class="absolute top-full left-0 mt-1 rounded-xl shadow-lg z-50 overflow-hidden" style="background: white; border: 1.5px solid var(--warm-200); width: 280px; max-height: 340px;">
+                        <div class="p-2" style="border-bottom: 1px solid var(--warm-100);">
+                          <input type="text" bind:value={kollSearchTerm} placeholder="Suchen…"
+                            class="w-full px-2.5 py-1.5 text-[11px] rounded-lg outline-none"
+                            style="border: 1px solid var(--warm-200); color: var(--warm-700);"
+                            onfocus={(e) => e.currentTarget.style.borderColor = 'var(--accent)'}
+                            onblur={(e) => e.currentTarget.style.borderColor = 'var(--warm-200)'} />
+                        </div>
+                        <div class="flex gap-2 px-2 py-1.5" style="border-bottom: 1px solid var(--warm-100);">
+                          <button onclick={() => { selectedKollektion = [...allKollValues]; }} class="text-[9px] font-medium underline" style="color: var(--accent);">Alle</button>
+                          <button onclick={() => { selectedKollektion = []; }} class="text-[9px] font-medium underline" style="color: var(--warm-400);">Keine</button>
+                        </div>
+                        <div class="overflow-y-auto" style="max-height: 250px;">
+                          {#each allKollValues.filter(k => !kollSearchTerm || k.toLowerCase().includes(kollSearchTerm.toLowerCase())) as koll}
+                            <label class="flex items-center gap-2 px-3 py-1.5 text-[11px] cursor-pointer hover:bg-gray-50" style="color: var(--warm-700);">
+                              <input type="checkbox" checked={selectedKollektion.includes(koll)}
+                                onchange={() => {
+                                  if (selectedKollektion.includes(koll)) {
+                                    selectedKollektion = selectedKollektion.filter(k => k !== koll)
+                                  } else {
+                                    selectedKollektion = [...selectedKollektion, koll]
+                                  }
+                                }}
+                                class="rounded" style="accent-color: var(--accent);" />
+                              {koll}
+                            </label>
+                          {/each}
+                        </div>
+                      </div>
+                    {/if}
+                  </div>
+                </div>
+              {/if}
+              {#if selectedArt.length > 0 || selectedKollektion.length > 0}
+                <button onclick={() => { selectedArt = []; selectedKollektion = []; }}
+                  class="text-[9px] font-medium underline ml-auto" style="color: var(--warm-400);">
+                  Filter zurücksetzen
+                </button>
+              {/if}
             </div>
-          {/if}
-          {#if selectedArt.length > 0 || selectedKollektion.length > 0}
-            <button onclick={() => { selectedArt = []; selectedKollektion = []; }}
-              class="text-[9px] font-medium underline ml-auto" style="color: var(--warm-400);">
-              Filter zurücksetzen
-            </button>
           {/if}
         </div>
       {/if}
