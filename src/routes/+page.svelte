@@ -1118,7 +1118,7 @@
       </div>
       <!-- Global Art + Kollektion Filter (collapsible) -->
       {#if allArtValues.length > 0 || allKollValues.length > 0}
-        <div class="mb-2 rounded-xl overflow-hidden" style="background: linear-gradient(135deg, #f0ebe4, var(--warm-100)); border: 1.5px solid var(--warm-200);">
+        <div class="mb-2 rounded-xl" style="background: linear-gradient(135deg, #f0ebe4, var(--warm-100)); border: 1.5px solid var(--warm-200);">
           <button onclick={() => filterOpen = !filterOpen}
             class="w-full flex items-center gap-2 px-4 py-2 cursor-pointer"
             style="color: var(--warm-600);">
