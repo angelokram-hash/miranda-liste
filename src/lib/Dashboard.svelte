@@ -130,6 +130,7 @@
 
   interface TopVariant { key: string; umsatz: number; anzahl: number; count: number; thumbBildId: string; articles: TopArt[]; }
   let variantTopArticles = $derived.by((): TopVariant[] => {
+    if (!variantenMode) return [];
     // Build BildId → variantKey mapping from RawRows
     const bildToVk = new Map<string, string>();
     for (const r of data) {

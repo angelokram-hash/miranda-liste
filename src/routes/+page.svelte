@@ -296,8 +296,8 @@
   }
 
   // ─── Lazy per-tab aggregation (only compute what's visible) ───
-  let totalUmsatz = $derived(filteredData.reduce((s, r) => s + (Number(r.EinzelPreis) || 0) * (Number(r.Anzahl) || 0), 0));
-  let totalAnzahl = $derived(filteredData.reduce((s, r) => s + (Number(r.Anzahl) || 0), 0));
+  let totalUmsatz = $derived(filteredData.reduce((s, r) => s + ((r as any).Umsatz || 0), 0));
+  let totalAnzahl = $derived(filteredData.reduce((s, r) => s + (r.Anzahl || 0), 0));
 
   // Cache: only recompute when period changes, not when tab changes
   let _aggCache = $state<{ period: string; field: string; result: GroupNode[] } | null>(null);
@@ -314,8 +314,8 @@
     return { total: totalUmsatz, totalAnzahl };
   });
 
-  let compTotalUmsatz = $derived(compareData.reduce((s, r) => s + (Number(r.EinzelPreis) || 0) * (Number(r.Anzahl) || 0), 0));
-  let compTotalAnzahl = $derived(compareData.reduce((s, r) => s + (Number(r.Anzahl) || 0), 0));
+  let compTotalUmsatz = $derived(compareData.reduce((s, r) => s + ((r as any).Umsatz || 0), 0));
+  let compTotalAnzahl = $derived(compareData.reduce((s, r) => s + (r.Anzahl || 0), 0));
 
   // Pre-filtered data for AreaChart (only last 10 visible periods instead of all 167k)
   let areaChartData = $derived.by(() => {
@@ -345,10 +345,11 @@
       const a = artMap.get(bid)!;
       if (!a.nr && r.Nr) a.nr = String(r.Nr);
       if (!a.kollektion && r.Kollektion) a.kollektion = r.Kollektion;
-      const an = Number(r.Anzahl) || 0;
-      a.umsatz += (Number(r.EinzelPreis) || 0) * an;
+      const an = r.Anzahl || 0;
+      a.umsatz += (r as any).Umsatz || 0;
       a.anzahl += an;
-      a.kassen.set((r as any).Channel || r.Kasse, (a.kassen.get((r as any).Channel || r.Kasse) || 0) + an);
+      const ch = (r as any).Channel || r.Kasse;
+      a.kassen.set(ch, (a.kassen.get(ch) || 0) + an);
     }
     let items: ArticleNode[] = Array.from(artMap.entries()).map(([bildId, a]) => ({
       bildId, nr: a.nr, kollektion: a.kollektion, einzelPreis: a.anzahl > 0 ? a.umsatz / a.anzahl : undefined,
@@ -378,6 +379,7 @@
   }
 
   let artikelVarianten = $derived.by((): VariantGroup[] => {
+    if (!artikelVariantenMode) return [];
     if (!filteredData.length) return [];
     // Step 1: build BildId → variantKey mapping from RawRows
     const bildToVariant = new Map<string, string>();
@@ -411,18 +413,20 @@
   let compGroupLookup = $derived.by(() => {
     const map = new Map<string, Map<string, { umsatz: number; anzahl: number }>>();
     if (!compareData.length) return map;
-    // Build for common L1 fields
-    for (const field of ['Kollektion', 'Form', 'Art', 'FormPfad', 'Channel', 'Preisgruppe', 'SubKollektion']) {
-      const fmap = new Map<string, { umsatz: number; anzahl: number }>();
-      for (const r of compareData) {
-        const k = (r as any)[field] || '(leer)';
-        if (!fmap.has(k)) fmap.set(k, { umsatz: 0, anzahl: 0 });
-        const g = fmap.get(k)!;
-        const an = Number(r.Anzahl) || 0;
-        g.umsatz += (Number(r.EinzelPreis) || 0) * an;
+    const fields = ['Kollektion', 'Form', 'Art', 'FormPfad', 'Channel', 'Preisgruppe', 'SubKollektion'] as const;
+    for (const f of fields) map.set(f, new Map());
+    // Single pass: accumulate all 7 fields per row (instead of 7 separate loops)
+    for (const r of compareData) {
+      const an = r.Anzahl || 0;
+      const um = (r as any).Umsatz || 0;
+      for (const f of fields) {
+        const k = (r as any)[f] || '(leer)';
+        const fmap = map.get(f)!;
+        let g = fmap.get(k);
+        if (!g) { g = { umsatz: 0, anzahl: 0 }; fmap.set(k, g); }
+        g.umsatz += um;
         g.anzahl += an;
       }
-      map.set(field, fmap);
     }
     return map;
   });
@@ -549,8 +553,8 @@
       if (!bid || bid === '0') continue;
       if (!artMap.has(bid)) artMap.set(bid, { umsatz: 0, anzahl: 0, kassen: new Map() });
       const a = artMap.get(bid)!;
-      const an = Number(r.Anzahl) || 0;
-      a.umsatz += (Number(r.EinzelPreis) || 0) * an;
+      const an = r.Anzahl || 0;
+      a.umsatz += (r as any).Umsatz || 0;
       a.anzahl += an;
       const ch = (r as any).Channel || r.Kasse;
       a.kassen.set(ch, (a.kassen.get(ch) || 0) + an);
@@ -563,7 +567,7 @@
 
   function buildGroup(name: string, rows: RawRow[], total: number, subGroupFields?: string[]): GroupNode {
     let umsatz = 0, anzahl = 0;
-    for (const r of rows) { const an = Number(r.Anzahl) || 0; umsatz += (Number(r.EinzelPreis) || 0) * an; anzahl += an; }
+    for (const r of rows) { umsatz += (r as any).Umsatz || 0; anzahl += r.Anzahl || 0; }
     const articles = buildArticles(rows, total);
     const node: GroupNode = {
       name, thumbBildId: articles[0]?.bildId || '',
@@ -630,62 +634,50 @@
   // Sync reactiveAllData → allData (keeps existing downstream working)
   $effect(() => { allData = reactiveAllData })
 
-  // ─── Period indices (rebuilt reactively when allData changes) ───
-  let weekIdx = $derived.by(() => {
-    const m = new Map<string, number[]>()
+  // ─── Period indices (ALL built in a single pass over allData) ───
+  let allIndices = $derived.by(() => {
+    const week = new Map<string, number[]>()
+    const month = new Map<string, number[]>()
+    const day = new Map<string, number[]>()
+    const year = new Map<string, number[]>()
+    const ranges = new Map<string, { min: string; max: string }>()
+
     for (let i = 0; i < allData.length; i++) {
       const r = allData[i]
-      const key = `${(r as any).Jahr}-${r.KW}`
-      if (!m.has(key)) m.set(key, [])
-      m.get(key)!.push(i)
-    }
-    return m
-  })
-  let monthIdx = $derived.by(() => {
-    const m = new Map<string, number[]>()
-    for (let i = 0; i < allData.length; i++) {
-      const r = allData[i]
-      const key = `${(r as any).Jahr}-${r.Monat}`
-      if (!m.has(key)) m.set(key, [])
-      m.get(key)!.push(i)
-    }
-    return m
-  })
-  let dayIdx = $derived.by(() => {
-    const m = new Map<string, number[]>()
-    for (let i = 0; i < allData.length; i++) {
-      if (!m.has(allData[i].Datum)) m.set(allData[i].Datum, [])
-      m.get(allData[i].Datum)!.push(i)
-    }
-    return m
-  })
-  let yearIdx = $derived.by(() => {
-    const m = new Map<string, number[]>()
-    for (let i = 0; i < allData.length; i++) {
-      const y = (allData[i] as any).Jahr as string
-      if (!m.has(y)) m.set(y, [])
-      m.get(y)!.push(i)
-    }
-    return m
-  })
-  let periodDateRange = $derived.by(() => {
-    const _ranges = new Map<string, { min: string; max: string }>()
-    function updateRange(key: string, datum: string) {
-      const r = _ranges.get(key)
-      if (!r) { _ranges.set(key, { min: datum, max: datum }); return }
-      if (datum < r.min) r.min = datum
-      if (datum > r.max) r.max = datum
-    }
-    for (const r of allData) {
       const y = (r as any).Jahr as string
       const d = r.Datum
-      updateRange(`${y}-${r.KW}`, d)
-      updateRange(`${y}-${r.Monat}`, d)
-      updateRange(d, d)
-      updateRange(y, d)
+      const wk = `${y}-${r.KW}`
+      const mk = `${y}-${r.Monat}`
+
+      let arr = week.get(wk)
+      if (!arr) { arr = []; week.set(wk, arr) }
+      arr.push(i)
+
+      arr = month.get(mk)
+      if (!arr) { arr = []; month.set(mk, arr) }
+      arr.push(i)
+
+      arr = day.get(d)
+      if (!arr) { arr = []; day.set(d, arr) }
+      arr.push(i)
+
+      arr = year.get(y)
+      if (!arr) { arr = []; year.set(y, arr) }
+      arr.push(i)
+
+      for (const key of [wk, mk, d, y]) {
+        const rng = ranges.get(key)
+        if (!rng) { ranges.set(key, { min: d, max: d }) }
+        else { if (d < rng.min) rng.min = d; if (d > rng.max) rng.max = d }
+      }
     }
-    return _ranges
+    return { week, month, day, year, ranges }
   })
+  let weekIdx = $derived(allIndices.week)
+  let monthIdx = $derived(allIndices.month)
+  let dayIdx = $derived(allIndices.day)
+  let yearIdx = $derived(allIndices.year)
+  let periodDateRange = $derived(allIndices.ranges)
 
   let availableDates = $derived([...dayIdx.keys()].sort())
   let availableKWs = $derived.by(() => [...weekIdx.keys()].sort((a, b) => {
@@ -722,6 +714,8 @@
     const decoded: RawRow[] = new Array(rows.length);
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
+      const ep = row[9], an = row[8], datum = row[12], monat = row[10];
+      const jahr = datum ? datum.slice(0, 4) : '2025';
       decoded[i] = {
         Kasse: d.K[row[0]],
         Kollektion: d.L[row[1]],
@@ -731,21 +725,20 @@
         Form: d.F[row[5]],
         FormPfad: d.P[row[6]],
         BildId: row[7],
-        Anzahl: row[8],
-        EinzelPreis: row[9],
-        Monat: row[10],
+        Anzahl: an,
+        EinzelPreis: ep,
+        Monat: monat,
         KW: row[11],
-        Datum: row[12],
+        Datum: datum,
         Quelle: d.Q ? d.Q[row[13]] : 'Einzelhandel',
       } as RawRow;
-    }
-
-    // Add computed fields
-    for (const r of decoded) {
-      (r as any).Preisgruppe = getPreisgruppe(Number(r.EinzelPreis) || 0);
-      (r as any).Jahr = r.Datum ? r.Datum.slice(0, 4) : '2025';
-      (r as any).JahrMonat = (r as any).Jahr + '-' + r.Monat;
-      (r as any).PreisObergruppe = getPreisObergruppe(Number(r.EinzelPreis) || 0);
+      // Computed fields inline (avoids second 762k loop)
+      const r = decoded[i] as any;
+      r.Preisgruppe = getPreisgruppe(ep);
+      r.Jahr = jahr;
+      r.JahrMonat = jahr + '-' + monat;
+      r.PreisObergruppe = getPreisObergruppe(ep);
+      r.Umsatz = ep * an;
     }
 
     // Read role from sessionStorage
