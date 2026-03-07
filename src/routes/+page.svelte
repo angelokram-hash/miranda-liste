@@ -12,6 +12,7 @@
     Kollektion: string; BildId: string; Anzahl: number; EinzelPreis: number;
     Art: string; Form: string; FormPfad: string; Nr: string; SubKollektion: string;
     Kasse: string; Monat: string; KW: string; Datum: string;
+    Quelle: string;
   }
 
   interface KasseStat { kasse: string; anzahl: number; }
@@ -43,20 +44,25 @@
   let roleLabel = $derived(allowedKassen ? allowedKassen.join(' + ') : '');
 
   // ─── State ───
+  let allDecodedData: RawRow[] = $state([]);
   let allData: RawRow[] = $state([]);
   let loading = $state(true);
   let activeTab = $state<TabId>('dashboard');
+
+  // ─── Multi-source ───
+  let availableSources: string[] = $state([]);
+  let selectedSources = $state(new Set<string>());
 
   // Pre-aggregated data — all derived, no $effect needed
   let preisSubTab = $state<'formpfad' | 'kollektion'>('formpfad');
   let kollSubMode = $state<'artikel' | 'subkollektion'>('artikel');
   // For Custom tab: 4 selectable levels
-  type DimOption = 'Kollektion' | 'FormPfad' | 'Kasse' | 'SubKollektion' | 'Form' | 'Preisgruppe' | '';
+  type DimOption = 'Kollektion' | 'FormPfad' | 'Channel' | 'SubKollektion' | 'Form' | 'Preisgruppe' | '';
   const DIM_OPTIONS: { value: DimOption; label: string }[] = [
     { value: '', label: '— keine —' },
     { value: 'Kollektion', label: 'Kollektion' },
     { value: 'FormPfad', label: 'FormPfad' },
-    { value: 'Kasse', label: 'Kasse' },
+    { value: 'Channel', label: 'Channel' },
     { value: 'SubKollektion', label: 'SubKollektion' },
     { value: 'Form', label: 'Form' },
     { value: 'Preisgruppe', label: 'Preisgruppe' },
@@ -74,11 +80,6 @@
   let timeUnit = $state<TimeUnit>('woche');
   let timeIdx = $state(0); // 0 = latest period
   let compareType = $state<CompareType>('vorperiode');
-
-  let availableDates = $state<string[]>([]);
-  let availableKWs = $state<string[]>([]);
-  let availableMonths = $state<string[]>([]);
-  let availableYears = $state<string[]>([]);
 
   // Today's info label
   const _now = new Date();
@@ -347,7 +348,7 @@
       const an = Number(r.Anzahl) || 0;
       a.umsatz += (Number(r.EinzelPreis) || 0) * an;
       a.anzahl += an;
-      a.kassen.set(r.Kasse, (a.kassen.get(r.Kasse) || 0) + an);
+      a.kassen.set((r as any).Channel || r.Kasse, (a.kassen.get((r as any).Channel || r.Kasse) || 0) + an);
     }
     let items: ArticleNode[] = Array.from(artMap.entries()).map(([bildId, a]) => ({
       bildId, nr: a.nr, kollektion: a.kollektion, einzelPreis: a.anzahl > 0 ? a.umsatz / a.anzahl : undefined,
@@ -411,7 +412,7 @@
     const map = new Map<string, Map<string, { umsatz: number; anzahl: number }>>();
     if (!compareData.length) return map;
     // Build for common L1 fields
-    for (const field of ['Kollektion', 'Form', 'Art', 'FormPfad', 'Kasse', 'Preisgruppe', 'SubKollektion']) {
+    for (const field of ['Kollektion', 'Form', 'Art', 'FormPfad', 'Channel', 'Preisgruppe', 'SubKollektion']) {
       const fmap = new Map<string, { umsatz: number; anzahl: number }>();
       for (const r of compareData) {
         const k = (r as any)[field] || '(leer)';
@@ -433,7 +434,7 @@
     if (activeTab === 'art') return 'Art';
     if (activeTab === 'formpfad') return 'FormPfad';
     if (activeTab === 'preis') return 'Preisgruppe';
-    if (activeTab === 'kasse') return 'Kasse';
+    if (activeTab === 'kasse') return 'Channel';
     if (activeTab === 'custom') return customDim1 || 'Kollektion';
     return '';
   }
@@ -476,7 +477,7 @@
       case 'form': return groupByField(filteredData, 'Form', totalUmsatz, ['Kollektion']);
       case 'art': return groupByField(filteredData, 'Art', totalUmsatz, ['Kollektion']);
       case 'formpfad': return groupByField(filteredData, 'FormPfad', totalUmsatz, ['Form', 'Kollektion']);
-      case 'kasse': return groupByField(filteredData, 'Kasse', totalUmsatz, ['Kollektion']);
+      case 'kasse': return groupByField(filteredData, 'Channel', totalUmsatz, ['Kollektion']);
       case 'preis': {
         const preisRanges = ['0 – 20 €', '20 – 50 €', '50 – 120 €', '120 – 250 €', 'über 250 €'];
         const byPreis = new Map<string, RawRow[]>();
@@ -551,7 +552,8 @@
       const an = Number(r.Anzahl) || 0;
       a.umsatz += (Number(r.EinzelPreis) || 0) * an;
       a.anzahl += an;
-      a.kassen.set(r.Kasse, (a.kassen.get(r.Kasse) || 0) + an);
+      const ch = (r as any).Channel || r.Kasse;
+      a.kassen.set(ch, (a.kassen.get(ch) || 0) + an);
     }
     return Array.from(artMap.entries()).map(([bildId, a]) => ({
       bildId, umsatz: a.umsatz, anzahl: a.anzahl,
@@ -595,13 +597,106 @@
     return 'Premium (über 250 €)';
   }
 
-  // ─── Period indices (built once at load, used for O(1) filtering) ───
-  let weekIdx = $state(new Map<string, number[]>());
-  let monthIdx = $state(new Map<string, number[]>());
-  let dayIdx = $state(new Map<string, number[]>());
-  let yearIdx = $state(new Map<string, number[]>());
-  // Date range per period key: { min: "2026-03-02", max: "2026-03-08" }
-  let periodDateRange = $state(new Map<string, { min: string; max: string }>());
+  // ─── Source toggle ───
+  function toggleSource(src: string) {
+    const next = new Set(selectedSources)
+    if (next.has(src)) {
+      if (next.size > 1) next.delete(src) // must keep at least 1
+    } else {
+      next.add(src)
+    }
+    selectedSources = next
+  }
+
+  // ─── Reactive allData: source filter + role filter + Channel field ───
+  let reactiveAllData: RawRow[] = $derived.by(() => {
+    if (!allDecodedData.length || !selectedSources.size) return []
+    // 1. Source filter
+    let filtered = allDecodedData.filter(r => selectedSources.has(r.Quelle))
+    // 2. Role filter — only applies to Einzelhandel
+    if (allowedKassen) {
+      filtered = filtered.filter(r =>
+        r.Quelle !== 'Einzelhandel' || allowedKassen!.includes(r.Kasse)
+      )
+    }
+    // 3. Compute Channel field
+    const multi = selectedSources.size > 1
+    for (const r of filtered) {
+      ;(r as any).Channel = multi ? r.Quelle : r.Kasse
+    }
+    return filtered
+  })
+
+  // Sync reactiveAllData → allData (keeps existing downstream working)
+  $effect(() => { allData = reactiveAllData })
+
+  // ─── Period indices (rebuilt reactively when allData changes) ───
+  let weekIdx = $derived.by(() => {
+    const m = new Map<string, number[]>()
+    for (let i = 0; i < allData.length; i++) {
+      const r = allData[i]
+      const key = `${(r as any).Jahr}-${r.KW}`
+      if (!m.has(key)) m.set(key, [])
+      m.get(key)!.push(i)
+    }
+    return m
+  })
+  let monthIdx = $derived.by(() => {
+    const m = new Map<string, number[]>()
+    for (let i = 0; i < allData.length; i++) {
+      const r = allData[i]
+      const key = `${(r as any).Jahr}-${r.Monat}`
+      if (!m.has(key)) m.set(key, [])
+      m.get(key)!.push(i)
+    }
+    return m
+  })
+  let dayIdx = $derived.by(() => {
+    const m = new Map<string, number[]>()
+    for (let i = 0; i < allData.length; i++) {
+      if (!m.has(allData[i].Datum)) m.set(allData[i].Datum, [])
+      m.get(allData[i].Datum)!.push(i)
+    }
+    return m
+  })
+  let yearIdx = $derived.by(() => {
+    const m = new Map<string, number[]>()
+    for (let i = 0; i < allData.length; i++) {
+      const y = (allData[i] as any).Jahr as string
+      if (!m.has(y)) m.set(y, [])
+      m.get(y)!.push(i)
+    }
+    return m
+  })
+  let periodDateRange = $derived.by(() => {
+    const _ranges = new Map<string, { min: string; max: string }>()
+    function updateRange(key: string, datum: string) {
+      const r = _ranges.get(key)
+      if (!r) { _ranges.set(key, { min: datum, max: datum }); return }
+      if (datum < r.min) r.min = datum
+      if (datum > r.max) r.max = datum
+    }
+    for (const r of allData) {
+      const y = (r as any).Jahr as string
+      const d = r.Datum
+      updateRange(`${y}-${r.KW}`, d)
+      updateRange(`${y}-${r.Monat}`, d)
+      updateRange(d, d)
+      updateRange(y, d)
+    }
+    return _ranges
+  })
+
+  let availableDates = $derived([...dayIdx.keys()].sort())
+  let availableKWs = $derived.by(() => [...weekIdx.keys()].sort((a, b) => {
+    const [ya, ka] = a.split('-'), [yb, kb] = b.split('-')
+    return ya !== yb ? ya.localeCompare(yb) : Number(ka) - Number(kb)
+  }))
+  let availableMonths = $derived.by(() => [...monthIdx.keys()].sort((a, b) => {
+    const [ya, ma] = a.split('-'), [yb, mb] = b.split('-')
+    return ya !== yb ? ya.localeCompare(yb) : MONAT_ORDER.indexOf(ma) - MONAT_ORDER.indexOf(mb)
+  }))
+  let availableYears = $derived([...yearIdx.keys()].sort())
 
   function getRowsForPeriod(period: string): RawRow[] {
     const idx = timeUnit === 'woche' ? weekIdx : timeUnit === 'monat' ? monthIdx : timeUnit === 'tag' ? dayIdx : yearIdx;
@@ -641,6 +736,7 @@
         Monat: row[10],
         KW: row[11],
         Datum: row[12],
+        Quelle: d.Q ? d.Q[row[13]] : 'Einzelhandel',
       } as RawRow;
     }
 
@@ -652,75 +748,31 @@
       (r as any).PreisObergruppe = getPreisObergruppe(Number(r.EinzelPreis) || 0);
     }
 
-    // Read role from sessionStorage and filter by allowed Kassen
+    // Read role from sessionStorage
     const role = sessionStorage.getItem('miranda-role') || 'all';
     userRole = role;
-    const kassenFilter = ROLE_KASSEN[role] || null;
-    const filtered = kassenFilter
-      ? decoded.filter(r => kassenFilter.includes(r.Kasse))
-      : decoded;
 
-    allData = filtered;
+    // Detect available sources and select all by default
+    const sources = [...new Set(decoded.map(r => r.Quelle))].sort();
+    availableSources = sources;
+    selectedSources = new Set(sources);
 
-    // Build period indices for O(1) lookup
-    const _wk = new Map<string, number[]>();
-    const _mo = new Map<string, number[]>();
-    const _dy = new Map<string, number[]>();
-    const _yr = new Map<string, number[]>();
+    // Store decoded data — reactive pipeline handles filtering
+    allDecodedData = decoded;
 
-    for (let i = 0; i < allData.length; i++) {
-      const r = allData[i];
-      const y = (r as any).Jahr;
-
-      const wKey = `${y}-${r.KW}`;
-      if (!_wk.has(wKey)) _wk.set(wKey, []);
-      _wk.get(wKey)!.push(i);
-
-      const mKey = `${y}-${r.Monat}`;
-      if (!_mo.has(mKey)) _mo.set(mKey, []);
-      _mo.get(mKey)!.push(i);
-
-      if (!_dy.has(r.Datum)) _dy.set(r.Datum, []);
-      _dy.get(r.Datum)!.push(i);
-
-      if (!_yr.has(y)) _yr.set(y, []);
-      _yr.get(y)!.push(i);
+    // Eagerly compute allData so downstream $derived indices are ready synchronously
+    // ($effect runs async, so allData would still be empty if we relied on it)
+    const multi = selectedSources.size > 1;
+    let initialFiltered = decoded.filter(r => selectedSources.has(r.Quelle));
+    if (allowedKassen) {
+      initialFiltered = initialFiltered.filter(r =>
+        r.Quelle !== 'Einzelhandel' || allowedKassen!.includes(r.Kasse)
+      );
     }
-
-    weekIdx = _wk;
-    monthIdx = _mo;
-    dayIdx = _dy;
-    yearIdx = _yr;
-
-    // Build date ranges per period (min/max Datum for each period key)
-    const _ranges = new Map<string, { min: string; max: string }>();
-    function updateRange(key: string, datum: string) {
-      const r = _ranges.get(key);
-      if (!r) { _ranges.set(key, { min: datum, max: datum }); return; }
-      if (datum < r.min) r.min = datum;
-      if (datum > r.max) r.max = datum;
+    for (const r of initialFiltered) {
+      ;(r as any).Channel = multi ? r.Quelle : r.Kasse;
     }
-    for (const r of allData) {
-      const y = (r as any).Jahr;
-      const d = r.Datum;
-      updateRange(`${y}-${r.KW}`, d);   // week
-      updateRange(`${y}-${r.Monat}`, d); // month
-      updateRange(d, d);                 // day
-      updateRange(y, d);                 // year
-    }
-    periodDateRange = _ranges;
-
-    // Populate filter options (year-scoped for months & KWs)
-    availableYears = [..._yr.keys()].sort();
-    availableMonths = [..._mo.keys()].sort((a, b) => {
-      const [ya, ma] = a.split('-'), [yb, mb] = b.split('-');
-      return ya !== yb ? ya.localeCompare(yb) : MONAT_ORDER.indexOf(ma) - MONAT_ORDER.indexOf(mb);
-    });
-    availableKWs = [..._wk.keys()].sort((a, b) => {
-      const [ya, ka] = a.split('-'), [yb, kb] = b.split('-');
-      return ya !== yb ? ya.localeCompare(yb) : Number(ka) - Number(kb);
-    });
-    availableDates = [..._dy.keys()].sort();
+    allData = initialFiltered;
 
     // Default: current KW in current year
     const now = new Date();
@@ -729,6 +781,8 @@
     const currentKW = String(Math.ceil(((now.getTime() - oneJan.getTime()) / 86400000 + oneJan.getDay() + 1) / 7)).padStart(2, '0');
     const currentYearKW = `${currentYear}-${currentKW}`;
     timeUnit = 'woche';
+    // Wait for reactive pipeline to populate availableKWs
+    // (allData → weekIdx → availableKWs happens synchronously in Svelte 5)
     const kwI = availableKWs.indexOf(currentYearKW);
     if (kwI >= 0) {
       timeIdx = availableKWs.length - 1 - kwI;
@@ -774,7 +828,7 @@
     { id: 'art', label: 'Typ' },
     { id: 'formpfad', label: 'FormPfad' },
     { id: 'preis', label: 'Preisgruppe' },
-    { id: 'kasse', label: 'Kasse' },
+    { id: 'kasse', label: 'Channel' },
     { id: 'custom', label: 'Individuell' },
     { id: 'xtable', label: 'X-Tabelle' },
   ];
@@ -808,7 +862,7 @@
             style="border: 1.5px solid var(--warm-200); color: var(--warm-500); background: white;"
             onmouseenter={(e) => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.color = 'var(--accent)'; }}
             onmouseleave={(e) => { e.currentTarget.style.borderColor = 'var(--warm-200)'; e.currentTarget.style.color = 'var(--warm-500)'; }}
-            title="Abmelden / Kasse wechseln">
+            title="Abmelden">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
             Logout
           </button>
@@ -895,6 +949,21 @@
           <span class="text-[9px] px-2 py-0.5 rounded-full" style="background: var(--warm-200); color: var(--warm-600);">
             Vgl: {compTotalAnzahl > 0 ? fmtNum(compTotalAnzahl) + ' Stk' : 'keine Daten'}
           </span>
+        {/if}
+        {#if availableSources.length > 1}
+          <div class="flex items-center gap-2 ml-1 pl-2" style="border-left: 1.5px solid var(--warm-300);">
+            <span class="text-[9px] font-bold uppercase tracking-[0.12em]" style="color: var(--accent);">Quelle:</span>
+            <div class="flex gap-1">
+              {#each availableSources as src}
+                {@const active = selectedSources.has(src)}
+                <button onclick={() => toggleSource(src)}
+                  class="px-2.5 py-1 text-[10px] font-semibold rounded-full transition-all"
+                  style="border: 1.5px solid {active ? 'var(--accent)' : 'var(--warm-200)'}; color: {active ? 'white' : 'var(--warm-400)'}; background: {active ? 'var(--accent)' : 'white'};">
+                  {src}
+                </button>
+              {/each}
+            </div>
+          </div>
         {/if}
         <div class="ml-auto text-right">
           <p class="text-[10px] font-semibold" style="color: var(--warm-600);">Heute: {todayLabel}</p>
@@ -1181,7 +1250,7 @@
                           {#if art.nr}<a href="https://www.konplott.com/go/{art.nr}" target="_blank" rel="noopener" class="text-[9px] underline" style="color: var(--accent);">konplott.com/go/{art.nr}</a>{/if}
                         </div>
                       </div>
-                      <p class="text-[9px] font-semibold mb-1.5" style="color: var(--warm-400);">Verkäufe nach Kasse</p>
+                      <p class="text-[9px] font-semibold mb-1.5" style="color: var(--warm-400);">Verkäufe nach Channel</p>
                       {#each art.kassenStats as ks}
                         <div class="flex items-center justify-between py-0.5"><span class="text-[10px] truncate" style="color: var(--warm-600); max-width: 120px;" title={ks.kasse}>{ks.kasse}</span><span class="text-[10px] tabular-nums font-medium" style="color: var(--warm-700);">{fmtNum(ks.anzahl)} Stk</span></div>
                       {/each}
@@ -1204,7 +1273,7 @@
                   {#if sOpen}
                     <div class="mt-2 w-52 sm:w-60 rounded-xl p-3 shadow-md" style="background: white; border: 1px solid var(--warm-200);">
                       <p class="text-[10px] font-semibold mb-1" style="color: var(--warm-700);">{fmtEUR(allArticles.sonstige.umsatz)} · {fmtNum(allArticles.sonstige.anzahl)} Stk</p>
-                      <p class="text-[9px] font-semibold mb-1.5" style="color: var(--warm-400);">Verkäufe nach Kasse</p>
+                      <p class="text-[9px] font-semibold mb-1.5" style="color: var(--warm-400);">Verkäufe nach Channel</p>
                       {#each allArticles.sonstige.kassenStats as ks}
                         <div class="flex items-center justify-between py-0.5"><span class="text-[10px] truncate" style="color: var(--warm-600); max-width: 120px;" title={ks.kasse}>{ks.kasse}</span><span class="text-[10px] tabular-nums font-medium" style="color: var(--warm-700);">{fmtNum(ks.anzahl)} Stk</span></div>
                       {/each}
@@ -1359,7 +1428,7 @@
                                                 </div>
                                                 {#if aOpen}
                                                   <div class="mt-1 w-40 rounded-lg p-2 shadow-md" style="background: white; border: 1px solid var(--warm-200);">
-                                                    <p class="text-[8px] font-semibold mb-1" style="color: var(--warm-400);">Verkäufe nach Kasse</p>
+                                                    <p class="text-[8px] font-semibold mb-1" style="color: var(--warm-400);">Verkäufe nach Channel</p>
                                                     {#each art.kassenStats as ks}
                                                       <div class="flex items-center justify-between py-0.5"><span class="text-[9px] truncate" style="color: var(--warm-600); max-width: 90px;" title={ks.kasse}>{ks.kasse}</span><span class="text-[9px] tabular-nums font-medium" style="color: var(--warm-700);">{fmtNum(ks.anzahl)}</span></div>
                                                     {/each}
@@ -1402,7 +1471,7 @@
                                       </div>
                                       {#if aOpen}
                                         <div class="mt-1.5 w-44 rounded-lg p-2.5 shadow-md" style="background: white; border: 1px solid var(--warm-200);">
-                                          <p class="text-[9px] font-semibold mb-1.5" style="color: var(--warm-400);">Verkäufe nach Kasse</p>
+                                          <p class="text-[9px] font-semibold mb-1.5" style="color: var(--warm-400);">Verkäufe nach Channel</p>
                                           {#each art.kassenStats as ks}
                                             <div class="flex items-center justify-between py-0.5"><span class="text-[10px] truncate" style="color: var(--warm-600); max-width: 100px;" title={ks.kasse}>{ks.kasse}</span><span class="text-[10px] tabular-nums font-medium" style="color: var(--warm-700);">{fmtNum(ks.anzahl)} Stk</span></div>
                                           {/each}
@@ -1450,7 +1519,7 @@
                                 <img src={imgUrl(art.bildId, 60)} alt="" class="w-7 h-7 rounded object-cover cursor-pointer" onclick={(e) => { e.stopPropagation(); lightboxUrl = imgUrl(art.bildId, 1000); }} />
                                 <div><p class="text-[10px] font-semibold" style="color: var(--warm-700);">{fmtEUR(art.umsatz)} · {fmtNum(art.anzahl)} Stk</p></div>
                               </div>
-                              <p class="text-[9px] font-semibold mb-1.5" style="color: var(--warm-400);">Verkäufe nach Kasse</p>
+                              <p class="text-[9px] font-semibold mb-1.5" style="color: var(--warm-400);">Verkäufe nach Channel</p>
                               {#each art.kassenStats as ks}
                                 <div class="flex items-center justify-between py-0.5"><span class="text-[10px] truncate" style="color: var(--warm-600); max-width: 120px;" title={ks.kasse}>{ks.kasse}</span><span class="text-[10px] tabular-nums font-medium" style="color: var(--warm-700);">{fmtNum(ks.anzahl)} Stk</span></div>
                               {/each}

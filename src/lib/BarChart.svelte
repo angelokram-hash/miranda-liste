@@ -8,11 +8,11 @@
 
   let { data = [], compareData = [] }: { data: RawRow[]; compareData: RawRow[] } = $props();
 
-  type XField = 'Kasse' | 'FormPfad' | 'Kollektion' | 'Monat' | 'KW';
+  type XField = 'Channel' | 'FormPfad' | 'Kollektion' | 'Monat' | 'KW';
   type YMode = 'umsatz' | 'anzahl';
-  type StackField = 'FormPfad' | 'Preisgruppe' | 'Kasse' | 'Kollektion';
+  type StackField = 'FormPfad' | 'Preisgruppe' | 'Channel' | 'Kollektion';
 
-  let xField = $state<XField>('Kasse');
+  let xField = $state<XField>('Channel');
   let yMode = $state<YMode>('umsatz');
   let stackField = $state<StackField>('FormPfad');
   let pctMode = $state(false);
@@ -37,6 +37,7 @@
       const ep = Number(r.EinzelPreis) || 0;
       if (ep < 20) return '0–20€'; if (ep < 50) return '20–50€'; if (ep < 120) return '50–120€'; if (ep < 250) return '120–250€'; return '250€+';
     }
+    if (field === 'Channel') return (r as any).Channel || r.Kasse || '(leer)';
     return (r as any)[field] || '(leer)';
   }
 
@@ -151,7 +152,7 @@
     <div>
       <p class="text-[9px] font-semibold uppercase tracking-[0.12em] mb-1.5" style="color: var(--warm-400);">X-Achse</p>
       <div class="flex rounded-lg overflow-hidden" style="border: 1px solid var(--warm-200);">
-        {#each (['Kasse', 'FormPfad', 'Kollektion', 'Monat', 'KW'] as const) as opt, i}
+        {#each (['Channel', 'FormPfad', 'Kollektion', 'Monat', 'KW'] as const) as opt, i}
           <button onclick={() => xField = opt}
             class="px-3 py-1.5 text-[11px] font-medium"
             style="background: {xField === opt ? 'var(--accent)' : 'white'}; color: {xField === opt ? 'white' : 'var(--warm-500)'}; {i > 0 ? 'border-left: 1px solid var(--warm-200)' : ''};">
@@ -172,7 +173,7 @@
     <div>
       <p class="text-[9px] font-semibold uppercase tracking-[0.12em] mb-1.5" style="color: var(--warm-400);">Stapelung</p>
       <div class="flex rounded-lg overflow-hidden" style="border: 1px solid var(--warm-200);">
-        {#each (['FormPfad', 'Preisgruppe', 'Kasse', 'Kollektion'] as const) as opt, i}
+        {#each (['FormPfad', 'Preisgruppe', 'Channel', 'Kollektion'] as const) as opt, i}
           <button onclick={() => stackField = opt}
             class="px-3 py-1.5 text-[11px] font-medium"
             style="background: {stackField === opt ? 'var(--accent)' : 'white'}; color: {stackField === opt ? 'white' : 'var(--warm-500)'}; {i > 0 ? 'border-left: 1px solid var(--warm-200)' : ''};">

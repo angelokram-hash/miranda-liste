@@ -3,6 +3,7 @@
     Kollektion: string; SubKollektion: string; Art: string; Form: string;
     FormPfad: string; Kasse: string; Monat: string; KW: string; Datum: string;
     Anzahl: number; EinzelPreis: number; BildId: string; Nr: string;
+    Quelle: string;
   }
 
   interface CellArticle {
@@ -24,7 +25,7 @@
   let { data = [], hideEuro = false }: { data: RawRow[]; hideEuro?: boolean } = $props()
 
   // ─── Dimension types ───
-  type XDimension = 'Alle' | 'Kollektion' | 'FormPfad' | 'Art' | 'PreisObergruppe' | 'Preisgruppe' | 'Kasse' | 'Jahr' | 'Monat' | 'JahrMonat' | 'SubKollektion'
+  type XDimension = 'Alle' | 'Kollektion' | 'FormPfad' | 'Art' | 'PreisObergruppe' | 'Preisgruppe' | 'Channel' | 'Jahr' | 'Monat' | 'JahrMonat' | 'SubKollektion'
 
   const COL_DIMS: { value: XDimension; label: string }[] = [
     { value: 'Alle', label: 'Alle' },
@@ -33,7 +34,7 @@
     { value: 'Art', label: 'Typ' },
     { value: 'PreisObergruppe', label: 'PreisObergruppe' },
     { value: 'Preisgruppe', label: 'Preisgruppe' },
-    { value: 'Kasse', label: 'Kasse' },
+    { value: 'Channel', label: 'Channel' },
     { value: 'Jahr', label: 'Jahr' },
     { value: 'Monat', label: 'Monat' },
     { value: 'JahrMonat', label: 'JahrMonat' },
@@ -47,7 +48,7 @@
     { value: 'PreisObergruppe', label: 'PreisObergruppe' },
     { value: 'SubKollektion', label: 'SubKollektion' },
     { value: 'Preisgruppe', label: 'Preisgruppe' },
-    { value: 'Kasse', label: 'Kasse' },
+    { value: 'Channel', label: 'Channel' },
     { value: 'Jahr', label: 'Jahr' },
     { value: 'Monat', label: 'Monat' },
     { value: 'JahrMonat', label: 'JahrMonat' },
@@ -60,7 +61,7 @@
     { value: 'Art', label: 'Typ' },
     { value: 'PreisObergruppe', label: 'PreisObergruppe' },
     { value: 'Preisgruppe', label: 'Preisgruppe' },
-    { value: 'Kasse', label: 'Kasse' },
+    { value: 'Channel', label: 'Channel' },
   ]
 
   const MONAT_SORT: Record<string, number> = {
@@ -69,7 +70,7 @@
   }
 
   // ─── State ───
-  let colDim = $state<XDimension>('Kasse')
+  let colDim = $state<XDimension>('Channel')
   let rowDim = $state<XDimension>('Kollektion')
   let filters = $state<Map<XDimension, Set<string>>>(new Map())
   let activeFilterDim = $state<XDimension | null>(null)
@@ -94,7 +95,7 @@
       case 'FormPfad': return (r as any).FormPfad || ((r.Form || '').trim().split(/\s+/)[0]) || '(leer)'
       case 'Art': return r.Art || '(leer)'
       case 'SubKollektion': return r.SubKollektion || '(leer)'
-      case 'Kasse': return r.Kasse || '(leer)'
+      case 'Channel': return (r as any).Channel || r.Kasse || '(leer)'
       case 'Monat': return r.Monat || '(leer)'
       case 'Jahr': return (r as any).Jahr || '(leer)'
       case 'JahrMonat': return (r as any).JahrMonat || '(leer)'
@@ -154,7 +155,8 @@
       const an = Number(r.Anzahl) || 0
       a.umsatz += (Number(r.EinzelPreis) || 0) * an
       a.anzahl += an
-      a.kassen.set(r.Kasse, (a.kassen.get(r.Kasse) || 0) + an)
+      const ch = (r as any).Channel || r.Kasse
+      a.kassen.set(ch, (a.kassen.get(ch) || 0) + an)
     }
     return Array.from(m.entries()).map(([bildId, a]) => ({
       bildId, nr: a.nr, kollektion: a.kollektion, form: a.form, preisgruppe: a.preisgruppe,

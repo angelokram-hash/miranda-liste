@@ -4,6 +4,7 @@ export interface RawRow {
   Nr: string; Form: string; Preisgruppe: string; BildId: string;
   Anzahl: number; EinzelPreis: number; GesamtPreis: number; Umsatz: number;
   PreisOberGruppe: string; Monat: string; Wochentag: string; KW: string; TRLUXREST: string;
+  Quelle: string;
 }
 
 export interface KasseStat { kasse: string; anzahl: number; }
@@ -64,6 +65,7 @@ export function getFieldValue(r: RawRow, field: string): string {
     case 'Kollektion': return r.Kollektion || '(leer)';
     case 'FormPfad': return getFormPfad(r.Form);
     case 'Kasse': return r.Kasse || '(leer)';
+    case 'Channel': return (r as any).Channel || r.Kasse || '(leer)';
     case 'SubKollektion': return r.SubKollektion || '(leer)';
     case 'Form': return r.Form || '(leer)';
     case 'Preisgruppe': return getPreisgruppe(Number(r.EinzelPreis) || 0);
@@ -135,7 +137,8 @@ function buildArticles(rows: RawRow[]): ArticleNode[] {
     const an = Number(r.Anzahl) || 0;
     a.umsatz += (Number(r.EinzelPreis) || 0) * an;
     a.anzahl += an;
-    a.kassen.set(r.Kasse, (a.kassen.get(r.Kasse) || 0) + an);
+    const ch = (r as any).Channel || r.Kasse;
+    a.kassen.set(ch, (a.kassen.get(ch) || 0) + an);
   }
   return Array.from(m.entries()).map(([bildId, a]) => ({
     bildId, nr: a.nr || undefined, kollektion: a.kollektion || undefined,

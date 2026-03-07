@@ -1,15 +1,16 @@
 /**
  * Import CSV → merge into existing data.json
- * Same CSV format as "SHop ab 2025" (semicolon-delimited, ISO-8859)
+ * v2: Multi-source support (Einzelhandel, Grosshandel, Webshop)
  *
  * Usage:
- *   node _import.cjs                          → reads from default SRC path
- *   node _import.cjs "D:/path/to/file.csv"    → reads from custom path
- *   node _import.cjs --all                    → skip prompt, import ALL rows
- *   node _import.cjs --new                    → skip prompt, import only NEW dates
+ *   node _import.cjs                                              → Einzelhandel from default path
+ *   node _import.cjs --source=Grosshandel --file="D:/path/GH.csv" → Grosshandel
+ *   node _import.cjs "D:/path/to/file.csv"                       → Einzelhandel from custom path
+ *   node _import.cjs --all                                       → skip prompt, import ALL rows
+ *   node _import.cjs --new                                       → skip prompt, import only NEW dates
  *
  * Interactive prompt: "Nur neue Zeiträume einlesen?" (default: Ja)
- *   Ja  → only imports rows for dates NOT already in data.json
+ *   Ja  → only imports rows for dates NOT already in data.json (for same source)
  *   Nein → imports ALL rows (may create duplicates for existing dates!)
  */
 const fs = require('fs');
@@ -18,7 +19,8 @@ const readline = require('readline');
 const zlib = require('zlib');
 
 // --- Config ---
-const DEFAULT_SRC = 'D:/Materialien/Catalog/SHop ab 2025';
+const DEFAULT_SRC_EH = 'D:/Materialien/Catalog/SHop ab 2025';
+const DEFAULT_SRC_GH = 'D:/Materialien/Catalog/Grosshandel';
 const DST = path.join(__dirname, 'static', 'data.json');
 
 const MONAT_MAP = {
@@ -39,13 +41,22 @@ function getISOWeek(dateStr) {
 
 // --- Parse CLI args ---
 const args = process.argv.slice(2);
-let srcFile = DEFAULT_SRC;
+let source = 'Einzelhandel';
+let srcFile = null;
 let forceMode = null; // null = ask, 'new' = only new, 'all' = all
 
 for (const arg of args) {
   if (arg === '--all') forceMode = 'all';
   else if (arg === '--new') forceMode = 'new';
-  else srcFile = arg;
+  else if (arg.startsWith('--source=')) source = arg.split('=')[1];
+  else if (arg.startsWith('--file=')) srcFile = arg.split('=').slice(1).join('=');
+  else if (!arg.startsWith('--')) srcFile = arg;
+}
+
+const isGrosshandel = source === 'Grosshandel';
+
+if (!srcFile) {
+  srcFile = isGrosshandel ? DEFAULT_SRC_GH : DEFAULT_SRC_EH;
 }
 
 // --- Helper: ask question ---
@@ -59,47 +70,76 @@ function ask(question, defaultAnswer) {
   });
 }
 
-// --- Helper: parse a CSV line into a row array ---
-// Supports two formats:
-//   Old (29+ cols): indices as documented in _convert.cjs
-//   New (17 cols):  [0]=Datum [1]=Kasse [2]=FormPfad [3]=Kollektion [4]=SubKollektion
-//                   [5]=Art [6]=Nr [7]=Farbe [8]=EAN [9]=Form [10]=Code
-//                   [11]=BildId [12]=Anzahl [13]=EinzelPreis [14-16]=other
+// --- Helper: parse a CSV line into a row object ---
 function parseLine(cols) {
-  // Parse date from col[0]: "27.09.2025 10:17:07" → "2025-09-27"
-  const dateParts = cols[0].split(' ')[0].split('.');
-  const datum = dateParts.length === 3
-    ? `${dateParts[2]}-${dateParts[1]}-${dateParts[0]}`
-    : '';
+  if (isGrosshandel) {
+    // Grosshandel: tab-delimited, 17 columns
+    let datum = '';
+    const rawDate = cols[0].split(' ')[0];
+    if (rawDate.includes('-')) {
+      datum = rawDate;
+    } else {
+      const parts = rawDate.split('.');
+      if (parts.length === 3) datum = `${parts[2]}-${parts[1]}-${parts[0]}`;
+    }
 
-  const parseNum = (s) => {
-    const n = parseFloat((s || '0').replace(',', '.'));
-    return isNaN(n) ? 0 : Math.round(n * 100) / 100;
-  };
-
-  if (cols.length >= 29) {
-    // Old 29+ column format
-    const monat = MONAT_MAP[cols[26]] || cols[25] || '';
-    const kw = cols[23].padStart(2, '0');
-    const anzahl = parseInt(cols[11]) || 0;
-    const einzelPreis = parseNum(cols[12]);
-    return {
-      kasse: cols[1], kollektion: cols[3], subKollektion: cols[5],
-      art: cols[6], nr: cols[7], form: cols[8], formPfad: cols[2],
-      bildId: cols[10], anzahl, einzelPreis, monat, kw, datum,
-    };
-  } else {
-    // New 17 column format — KW and Monat derived from Datum
     const mm = datum ? datum.split('-')[1] : '';
     const monat = MONAT_MAP[mm] || '';
     const kw = datum ? getISOWeek(datum) : '00';
     const anzahl = parseInt(cols[12]) || 0;
-    const einzelPreis = parseNum(cols[13]);
+    // Grosshandel uses dot-decimal
+    const einzelPreis = (() => {
+      const n = parseFloat(cols[13] || '0');
+      return isNaN(n) ? 0 : Math.round(n * 100) / 100;
+    })();
+
     return {
-      kasse: cols[1], kollektion: cols[3], subKollektion: cols[4],
-      art: cols[5], nr: cols[10], form: cols[9], formPfad: cols[2],
-      bildId: cols[11], anzahl, einzelPreis, monat, kw, datum,
+      kasse: cols[1],       // Gebiet
+      kollektion: cols[3],
+      subKollektion: cols[7],
+      art: cols[4],
+      nr: cols[8],
+      form: cols[9],
+      formPfad: cols[2],
+      bildId: cols[11],
+      anzahl, einzelPreis, monat, kw, datum,
     };
+  } else {
+    // Einzelhandel: semicolon-delimited
+    const dateParts = cols[0].split(' ')[0].split('.');
+    const datum = dateParts.length === 3
+      ? `${dateParts[2]}-${dateParts[1]}-${dateParts[0]}`
+      : '';
+
+    const parseNum = (s) => {
+      const n = parseFloat((s || '0').replace(',', '.'));
+      return isNaN(n) ? 0 : Math.round(n * 100) / 100;
+    };
+
+    if (cols.length >= 29) {
+      // Old 29+ column format
+      const monat = MONAT_MAP[cols[26]] || cols[25] || '';
+      const kw = cols[23].padStart(2, '0');
+      const anzahl = parseInt(cols[11]) || 0;
+      const einzelPreis = parseNum(cols[12]);
+      return {
+        kasse: cols[1], kollektion: cols[3], subKollektion: cols[5],
+        art: cols[6], nr: cols[7], form: cols[8], formPfad: cols[2],
+        bildId: cols[10], anzahl, einzelPreis, monat, kw, datum,
+      };
+    } else {
+      // New 17 column format
+      const mm = datum ? datum.split('-')[1] : '';
+      const monat = MONAT_MAP[mm] || '';
+      const kw = datum ? getISOWeek(datum) : '00';
+      const anzahl = parseInt(cols[12]) || 0;
+      const einzelPreis = parseNum(cols[13]);
+      return {
+        kasse: cols[1], kollektion: cols[3], subKollektion: cols[4],
+        art: cols[5], nr: cols[10], form: cols[9], formPfad: cols[2],
+        bildId: cols[11], anzahl, einzelPreis, monat, kw, datum,
+      };
+    }
   }
 }
 
@@ -108,6 +148,9 @@ async function main() {
   console.log('╔══════════════════════════════════════════════════╗');
   console.log('║        miranda-liste  CSV Import Tool           ║');
   console.log('╚══════════════════════════════════════════════════╝\n');
+
+  console.log(`📌 Quelle: ${source}`);
+  console.log(`📂 Format: ${isGrosshandel ? 'Tab-delimited, UTF-8' : 'Semicolon-delimited, ISO-8859-1'}`);
 
   // 1. Check source file
   if (!fs.existsSync(srcFile)) {
@@ -118,43 +161,58 @@ async function main() {
   console.log(`📂 Quelldatei: ${srcFile} (${srcSize} MB)`);
 
   // 2. Load existing data.json
-  let existingDicts = { K: [], L: [], S: [], A: [], N: [], F: [], P: [] };
+  let existingDicts = { K: [], L: [], S: [], A: [], N: [], F: [], P: [], Q: [] };
   let existingRows = [];
-  let existingDates = new Set();
+  let existingDates = new Set(); // dates for THIS source only
 
   if (fs.existsSync(DST)) {
     console.log(`📦 Lade bestehende data.json...`);
     const existing = JSON.parse(fs.readFileSync(DST, 'utf-8'));
     existingDicts = existing.d;
+    if (!existingDicts.Q) existingDicts.Q = [];
     existingRows = existing.r;
 
-    // Collect all existing dates
+    // Find source index in Q dictionary
+    let sourceIdx = existingDicts.Q.indexOf(source);
+
+    // Collect dates for THIS source only (for dedup)
     for (const row of existingRows) {
-      existingDates.add(row[12]); // datum is at index 12
+      const rowQuelle = row.length > 13 ? row[13] : -1;
+      if (sourceIdx < 0 || rowQuelle === sourceIdx) {
+        existingDates.add(row[12]); // datum is at index 12
+      }
     }
-    console.log(`   → ${existingRows.length} bestehende Zeilen, ${existingDates.size} unique Tage`);
-    const sortedDates = [...existingDates].sort();
-    console.log(`   → Zeitraum: ${sortedDates[0]} bis ${sortedDates[sortedDates.length - 1]}`);
+    console.log(`   → ${existingRows.length} bestehende Zeilen total`);
+    if (sourceIdx >= 0) {
+      const srcRows = existingRows.filter(r => r.length > 13 && r[13] === sourceIdx).length;
+      console.log(`   → ${srcRows} davon ${source}`);
+    }
+    console.log(`   → ${existingDates.size} unique Tage (${source})`);
   } else {
     console.log(`⚠️  Keine bestehende data.json gefunden — erstelle neue.`);
   }
 
   // 3. Read CSV
   console.log(`\n📖 Lese CSV-Datei...`);
-  const raw = fs.readFileSync(srcFile, 'latin1');
-  const lines = raw.split(/\r?\n/).filter(l => l.trim());
+  const raw = fs.readFileSync(srcFile, isGrosshandel ? 'utf-8' : 'latin1');
+  const allLines = raw.split(/\r?\n/).filter(l => l.trim());
+
+  // Skip header for Grosshandel
+  const startIdx = isGrosshandel && allLines.length > 0 && allLines[0].includes('Datum') ? 1 : 0;
+  const lines = allLines.slice(startIdx);
   console.log(`   → ${lines.length} Zeilen gelesen`);
 
-  // 4. Parse all CSV lines first (to know date range)
+  // 4. Parse all CSV lines
+  const delimiter = isGrosshandel ? '\t' : ';';
   const csvParsed = [];
   let parseErrors = 0;
   const csvDates = new Set();
 
   for (let i = 0; i < lines.length; i++) {
-    const cols = lines[i].split(';').map(c => c.replace(/^"|"$/g, '').trim());
-    if (cols.length < 17) {
+    const cols = lines[i].split(delimiter).map(c => c.replace(/^"|"$/g, '').trim());
+    if (cols.length < (isGrosshandel ? 14 : 17)) {
       parseErrors++;
-      if (parseErrors <= 3) console.log(`   ⚠️  Zeile ${i + 1}: nur ${cols.length} Spalten, übersprungen`);
+      if (parseErrors <= 3) console.log(`   ⚠️  Zeile ${startIdx + i + 1}: nur ${cols.length} Spalten, übersprungen`);
       continue;
     }
     const parsed = parseLine(cols);
@@ -164,9 +222,11 @@ async function main() {
 
   const sortedCsvDates = [...csvDates].sort();
   console.log(`   → ${csvParsed.length} gültige Zeilen (${parseErrors} Fehler)`);
-  console.log(`   → Zeitraum: ${sortedCsvDates[0]} bis ${sortedCsvDates[sortedCsvDates.length - 1]}`);
+  if (sortedCsvDates.length > 0) {
+    console.log(`   → Zeitraum: ${sortedCsvDates[0]} bis ${sortedCsvDates[sortedCsvDates.length - 1]}`);
+  }
 
-  // 5. Calculate new vs existing dates
+  // 5. Calculate new vs existing dates (within same source)
   const newDates = new Set([...csvDates].filter(d => !existingDates.has(d)));
   const overlapDates = new Set([...csvDates].filter(d => existingDates.has(d)));
   const newDateRows = csvParsed.filter(r => newDates.has(r.datum));
@@ -211,27 +271,27 @@ async function main() {
       process.exit(0);
     }
   } else {
-    // Remove existing rows for dates that exist in CSV, then add all CSV rows
     rowsToImport = csvParsed;
-    // Remove overlapping dates from existingRows
+    // Remove overlapping dates from existingRows (only for THIS source)
     if (overlapDates.size > 0) {
+      const sourceIdx = existingDicts.Q.indexOf(source);
       const beforeCount = existingRows.length;
-      existingRows = existingRows.filter(r => !overlapDates.has(r[12]));
-      console.log(`   → ${beforeCount - existingRows.length} bestehende Zeilen für überlappende Tage entfernt`);
+      existingRows = existingRows.filter(r => {
+        if (r.length > 13 && r[13] === sourceIdx && overlapDates.has(r[12])) return false;
+        // Legacy rows without Q index: only remove if source is Einzelhandel
+        if (r.length <= 13 && source === 'Einzelhandel' && overlapDates.has(r[12])) return false;
+        return true;
+      });
+      console.log(`   → ${beforeCount - existingRows.length} bestehende ${source}-Zeilen für überlappende Tage entfernt`);
     }
   }
 
-  console.log(`\n⚙️  Importiere ${rowsToImport.length} Zeilen...`);
+  console.log(`\n⚙️  Importiere ${rowsToImport.length} Zeilen als ${source}...`);
 
   // 8. Rebuild dictionary maps from existing dictionaries
   const dictMaps = {
-    K: new Map(), // Kasse
-    L: new Map(), // Kollektion
-    S: new Map(), // SubKollektion
-    A: new Map(), // Art
-    N: new Map(), // Nr
-    F: new Map(), // Form
-    P: new Map(), // FormPfad
+    K: new Map(), L: new Map(), S: new Map(), A: new Map(),
+    N: new Map(), F: new Map(), P: new Map(), Q: new Map(),
   };
 
   // Populate maps from existing dictionaries
@@ -248,6 +308,18 @@ async function main() {
     const idx = dict.size;
     dict.set(v, idx);
     return idx;
+  }
+
+  // Ensure source is in Q dictionary
+  const quelleIdx = dictIdx(dictMaps.Q, source);
+
+  // Upgrade legacy rows (no Q index) to Einzelhandel
+  if (existingRows.length > 0 && existingRows[0].length <= 13) {
+    const ehIdx = dictIdx(dictMaps.Q, 'Einzelhandel');
+    console.log(`   → Upgrading ${existingRows.length} legacy rows: adding Quelle=Einzelhandel (idx=${ehIdx})`);
+    for (const r of existingRows) {
+      r.push(ehIdx);
+    }
   }
 
   // 9. Convert new rows to compact format
@@ -267,24 +339,21 @@ async function main() {
       r.monat,                               // 10: Monat
       r.kw,                                  // 11: KW
       r.datum,                               // 12: Datum
+      quelleIdx,                             // 13: Quelle
     ]);
   }
 
-  // 10. Re-encode existing rows if dictionaries grew
-  //     (existing rows use old dict indices, which remain valid since we only append)
-  //     → No re-encoding needed! Old indices stay the same.
-
-  // 11. Merge rows
+  // 10. Merge rows
   const allRows = [...existingRows, ...newRows];
 
-  // Sort by date for consistent ordering
+  // Sort by date
   allRows.sort((a, b) => {
     if (a[12] < b[12]) return -1;
     if (a[12] > b[12]) return 1;
     return 0;
   });
 
-  // 12. Build output dictionaries
+  // 11. Build output dictionaries
   const dictArrays = {};
   for (const [key, map] of Object.entries(dictMaps)) {
     const arr = new Array(map.size);
@@ -292,7 +361,7 @@ async function main() {
     dictArrays[key] = arr;
   }
 
-  // 13. Write output
+  // 12. Write output
   const output = { d: dictArrays, r: allRows };
   const json = JSON.stringify(output);
 
@@ -307,7 +376,7 @@ async function main() {
 
   fs.writeFileSync(DST, json);
 
-  // 14. Stats
+  // 13. Stats
   const sizeMB = (fs.statSync(DST).size / 1024 / 1024).toFixed(2);
   const gzSize = (zlib.gzipSync(json).length / 1024 / 1024).toFixed(2);
   const brSize = (zlib.brotliCompressSync(json).length / 1024 / 1024).toFixed(2);
@@ -329,11 +398,19 @@ async function main() {
   console.log(`║  Brotli: ${brSize.padStart(8)} MB                          ║`);
   console.log(`╚══════════════════════════════════════════════════╝`);
 
-  // Dictionary stats
+  // Dictionary + Source stats
   console.log(`\n📚 Dictionaries:`);
   for (const [key, arr] of Object.entries(dictArrays)) {
-    const label = { K: 'Kasse', L: 'Kollektion', S: 'SubKollektion', A: 'Art', N: 'Nr', F: 'Form', P: 'FormPfad' }[key];
+    const label = { K: 'Kasse/Gebiet', L: 'Kollektion', S: 'SubKollektion', A: 'Art', N: 'Nr', F: 'Form', P: 'FormPfad', Q: 'Quelle' }[key] || key;
     console.log(`   ${key} (${label}): ${arr.length} Einträge`);
+  }
+
+  if (dictArrays.Q && dictArrays.Q.length > 0) {
+    console.log(`\n📊 Quellen:`);
+    for (let qi = 0; qi < dictArrays.Q.length; qi++) {
+      const count = allRows.filter(r => r[13] === qi).length;
+      console.log(`   ${dictArrays.Q[qi]}: ${count} Zeilen`);
+    }
   }
 }
 

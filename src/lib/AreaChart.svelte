@@ -14,7 +14,7 @@
 
   const MIN_PERIODS = 10;
 
-  type ValueField = 'Kollektion' | 'Artikel' | 'Art' | 'Preisgruppe' | 'Kasse';
+  type ValueField = 'Kollektion' | 'Artikel' | 'Art' | 'Preisgruppe' | 'Channel';
   type YMode = 'umsatz' | 'anzahl';
 
   let valueField = $state<ValueField>('Kollektion');
@@ -42,6 +42,7 @@
       const ep = Number(r.EinzelPreis) || 0;
       if (ep < 20) return '0\u201320\u20ac'; if (ep < 50) return '20\u201350\u20ac'; if (ep < 120) return '50\u2013120\u20ac'; if (ep < 250) return '120\u2013250\u20ac'; return '250\u20ac+';
     }
+    if (field === 'Channel') return (r as any).Channel || r.Kasse || '(leer)';
     return (r as any)[field] || '(leer)';
   }
 
@@ -213,7 +214,7 @@
     <div>
       <p class="text-[9px] font-semibold uppercase tracking-[0.12em] mb-1.5" style="color: var(--warm-400);">Werte</p>
       <div class="flex rounded-lg overflow-hidden" style="border: 1px solid var(--warm-200);">
-        {#each (['Kollektion', 'Artikel', 'Art', 'Preisgruppe', 'Kasse'] as const) as opt, i}
+        {#each (['Kollektion', 'Artikel', 'Art', 'Preisgruppe', 'Channel'] as const) as opt, i}
           <button onclick={() => valueField = opt}
             class="px-3 py-1.5 text-[11px] font-medium"
             style="background: {valueField === opt ? 'var(--accent)' : 'white'}; color: {valueField === opt ? 'white' : 'var(--warm-500)'}; {i > 0 ? 'border-left: 1px solid var(--warm-200)' : ''};">

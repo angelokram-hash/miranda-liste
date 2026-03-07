@@ -2,6 +2,7 @@
   interface RawRow {
     Kollektion: string; BildId: string; Anzahl: number; EinzelPreis: number;
     Form: string; FormPfad: string; Kasse: string; Art: string; Nr: string; KW: string; Monat: string; Datum: string;
+    Quelle: string;
   }
 
   let { data = [], compareData = [], allData = [], timeUnit = 'woche', periods = [] as string[], currentLabel = '', compareLabel = '', pickedNrs = new Set<string>(), onTogglePick, hideEuro = false }: {
@@ -89,7 +90,8 @@
       if (!m.has(bid)) m.set(bid, { nr: String(r.Nr || ''), koll: r.Kollektion, umsatz: 0, anzahl: 0, kassen: new Map() });
       const a = m.get(bid)!; const an = Number(r.Anzahl) || 0;
       a.umsatz += (Number(r.EinzelPreis) || 0) * an; a.anzahl += an;
-      a.kassen.set(r.Kasse, (a.kassen.get(r.Kasse) || 0) + an);
+      const ch = (r as any).Channel || r.Kasse;
+      a.kassen.set(ch, (a.kassen.get(ch) || 0) + an);
     }
     const cm = new Map<string, { umsatz: number; anzahl: number }>();
     for (const r of compareData) {
@@ -228,7 +230,7 @@
   // Shop Umsatzverlauf (last 30 periods)
   let shopTrend = $derived.by(() => {
     const kwShopMap = new Map<string, Map<string, number>>(); const shopTotals = new Map<string, number>();
-    for (const r of last30Data) { const kw = periodKey(r); const shop = r.Kasse; if (!kwShopMap.has(kw)) kwShopMap.set(kw, new Map()); const sm = kwShopMap.get(kw)!;
+    for (const r of last30Data) { const kw = periodKey(r); const shop = (r as any).Channel || r.Kasse; if (!kwShopMap.has(kw)) kwShopMap.set(kw, new Map()); const sm = kwShopMap.get(kw)!;
       const u = (Number(r.EinzelPreis) || 0) * (Number(r.Anzahl) || 0); sm.set(shop, (sm.get(shop) || 0) + u); shopTotals.set(shop, (shopTotals.get(shop) || 0) + u); }
     const topShops = [...shopTotals.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(e => e[0]);
     const kws = [...kwShopMap.keys()].sort((a, b) => periods.indexOf(b) - periods.indexOf(a));
@@ -264,9 +266,9 @@
   let tmDrill = $state<DrillLevel[]>([]);
   interface TmNode { label: string; value: number; bildId: string; drillKey: string; compValue: number; }
   function tmDrillPath(field: TreemapField): string[] {
-    if (field === 'Kollektion') return ['Kollektion', 'FormPfad', 'Artikel', 'Kasse'];
-    if (field === 'FormPfad') return ['FormPfad', 'Kollektion', 'Artikel', 'Kasse'];
-    return ['Artikel', 'Kasse'];
+    if (field === 'Kollektion') return ['Kollektion', 'FormPfad', 'Artikel', 'Channel'];
+    if (field === 'FormPfad') return ['FormPfad', 'Kollektion', 'Artikel', 'Channel'];
+    return ['Artikel', 'Channel'];
   }
   let tmCurrentLevel = $derived(tmDrill.length);
   let tmPathArr = $derived(tmDrillPath(tmField));
@@ -282,13 +284,13 @@
     const m = new Map<string, { value: number; bildId: string }>();
     for (const r of rows) { let key: string; let bildId = '';
       if (curField === 'Artikel') { const bid = String(r.BildId); if (!bid || bid === '0') continue; key = bid; bildId = bid; }
-      else if (curField === 'Kasse') { key = r.Kasse || '(leer)'; } else { key = (r as any)[curField] || '(leer)'; }
+      else if (curField === 'Channel') { key = (r as any).Channel || r.Kasse || '(leer)'; } else { key = (r as any)[curField] || '(leer)'; }
       if (!m.has(key)) m.set(key, { value: 0, bildId }); const a = m.get(key)!;
       a.value += (Number(r.EinzelPreis) || 0) * (Number(r.Anzahl) || 0); if (!a.bildId && bildId) a.bildId = bildId; }
     const cm = new Map<string, number>();
     for (const r of cRows) { let key: string;
       if (curField === 'Artikel') { const bid = String(r.BildId); if (!bid || bid === '0') continue; key = bid; }
-      else if (curField === 'Kasse') { key = r.Kasse || '(leer)'; } else { key = (r as any)[curField] || '(leer)'; }
+      else if (curField === 'Channel') { key = (r as any).Channel || r.Kasse || '(leer)'; } else { key = (r as any)[curField] || '(leer)'; }
       cm.set(key, (cm.get(key) || 0) + (Number(r.EinzelPreis) || 0) * (Number(r.Anzahl) || 0)); }
     let nodes: TmNode[] = [...m.entries()].map(([label, a]) => ({ label, value: a.value, bildId: a.bildId, drillKey: label, compValue: cm.get(label) || 0 })).sort((a, b) => b.value - a.value);
     const limit = tmTop20 ? 20 : nodes.length;
@@ -341,7 +343,7 @@
       const filtered = timeUnit === 'jahr' ? allData : allData.filter(r => periodKey(r) === p);
       for (const r of filtered) {
         if (String(r.BildId) !== mxSelectedArt) continue;
-        const k = r.Kasse; const an = Number(r.Anzahl) || 0;
+        const k = (r as any).Channel || r.Kasse; const an = Number(r.Anzahl) || 0;
         const val = mxSortBy === 'umsatz' ? (Number(r.EinzelPreis) || 0) * an : an;
         if (!kasseMap.has(k)) kasseMap.set(k, new Array(last10.length).fill(0));
         kasseMap.get(k)![pi] += val;
@@ -769,7 +771,7 @@
       <div class="mt-4 rounded-lg overflow-hidden" style="border: 1px solid var(--accent); background: #faf5ed;">
         <div class="flex items-center gap-2 px-3 py-2" style="background: var(--accent);">
           <img src={imgUrl(mxSelectedArt, 40)} alt="" class="w-6 h-6 rounded object-cover" />
-          <span class="text-[10px] font-bold" style="color: white;">Kassen-Aufschlüsselung ({mxSortBy === 'umsatz' ? 'Umsatz' : 'Anzahl'})</span>
+          <span class="text-[10px] font-bold" style="color: white;">Channel-Aufschlüsselung ({mxSortBy === 'umsatz' ? 'Umsatz' : 'Anzahl'})</span>
           <!-- svelte-ignore a11y_click_events_have_key_events --><!-- svelte-ignore a11y_no_static_element_interactions -->
           <span class="ml-auto text-[10px] cursor-pointer px-2 py-0.5 rounded" style="color: white; background: rgba(255,255,255,0.2);" onclick={() => mxSelectedArt = null}>&#10005;</span>
         </div>
@@ -777,7 +779,7 @@
           <table class="w-full text-[9px]" style="border-collapse: collapse;">
             <thead>
               <tr style="border-bottom: 1.5px solid var(--warm-200); background: var(--warm-50);">
-                <th class="px-2 py-1.5 text-left font-semibold sticky left-0" style="color: var(--warm-500); background: var(--warm-50); min-width: 100px;">Kasse</th>
+                <th class="px-2 py-1.5 text-left font-semibold sticky left-0" style="color: var(--warm-500); background: var(--warm-50); min-width: 100px;">Channel</th>
                 {#each mxKassenData.labels as label}
                   <th class="px-2 py-1.5 text-right font-semibold" style="color: var(--warm-500); min-width: 65px;">{label}</th>
                 {/each}

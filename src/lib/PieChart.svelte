@@ -8,7 +8,7 @@
 
   let { data = [] }: { data: RawRow[] } = $props();
 
-  type ValueField = 'Kollektion' | 'FormPfad' | 'Preisgruppe' | 'Kasse';
+  type ValueField = 'Kollektion' | 'FormPfad' | 'Preisgruppe' | 'Channel';
   type SubField = 'Kollektion' | 'FormPfad' | 'Preisgruppe' | '';
 
   let valueField = $state<ValueField>('Kollektion');
@@ -38,6 +38,7 @@
       const ep = Number(r.EinzelPreis) || 0;
       if (ep < 20) return '0–20€'; if (ep < 50) return '20–50€'; if (ep < 120) return '50–120€'; if (ep < 250) return '120–250€'; return '250€+';
     }
+    if (field === 'Channel') return (r as any).Channel || r.Kasse || '(leer)';
     return (r as any)[field] || '(leer)';
   }
 
@@ -123,7 +124,7 @@
     <div>
       <p class="text-[9px] font-semibold uppercase tracking-[0.12em] mb-1.5" style="color: var(--warm-400);">Werte (außen)</p>
       <div class="flex rounded-lg overflow-hidden" style="border: 1px solid var(--warm-200);">
-        {#each (['Kollektion', 'FormPfad', 'Preisgruppe', 'Kasse'] as const) as opt, i}
+        {#each (['Kollektion', 'FormPfad', 'Preisgruppe', 'Channel'] as const) as opt, i}
           <button onclick={() => valueField = opt}
             class="px-3 py-1.5 text-[11px] font-medium"
             style="background: {valueField === opt ? 'var(--accent)' : 'white'}; color: {valueField === opt ? 'white' : 'var(--warm-500)'}; {i > 0 ? 'border-left: 1px solid var(--warm-200)' : ''};">
