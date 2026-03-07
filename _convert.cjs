@@ -397,3 +397,70 @@ if (output.d.Q) {
     console.log(`  ${output.d.Q[qi]}: ${count} rows`);
   }
 }
+
+// ─── Year-split output ───
+console.log('\n--- Splitting by year ---');
+const rowsByYear = {};
+for (const r of output.r) {
+  const y = r[12].slice(0, 4);
+  if (!rowsByYear[y]) rowsByYear[y] = [];
+  rowsByYear[y].push(r);
+}
+const yearList = Object.keys(rowsByYear).sort();
+console.log('Years:', yearList.join(', '));
+
+// Dict key indices that are dictionary-encoded (not raw values)
+const DICT_COLS = [
+  [0, 'K'], [1, 'L'], [2, 'S'], [3, 'A'], [4, 'N'], [5, 'F'], [6, 'P'], [13, 'Q'],
+];
+// Raw value columns: 7=BildId, 8=Anzahl, 9=EinzelPreis, 10=Monat, 11=KW, 12=Datum
+
+for (const y of yearList) {
+  const yRows = rowsByYear[y];
+
+  // Collect which dict values are actually used in this year
+  const usedVals = {};
+  for (const [col, key] of DICT_COLS) usedVals[key] = new Set();
+  for (const r of yRows) {
+    for (const [col, key] of DICT_COLS) usedVals[key].add(r[col]);
+  }
+
+  // Build year-specific dictionaries: old index → new index mapping
+  const yDictArrays = {};
+  const remaps = {};
+  for (const [col, key] of DICT_COLS) {
+    const srcArr = output.d[key];
+    if (!srcArr) continue;
+    const newArr = [];
+    const oldToNew = new Map();
+    for (const oldIdx of [...usedVals[key]].sort((a, b) => a - b)) {
+      oldToNew.set(oldIdx, newArr.length);
+      newArr.push(srcArr[oldIdx]);
+    }
+    yDictArrays[key] = newArr;
+    remaps[key] = oldToNew;
+  }
+
+  // Re-encode rows with year-specific dict indices
+  const reEncoded = yRows.map(r => {
+    const nr = [...r];
+    for (const [col, key] of DICT_COLS) {
+      if (remaps[key]) nr[col] = remaps[key].get(r[col]);
+    }
+    return nr;
+  });
+
+  const yearOutput = { d: yDictArrays, r: reEncoded };
+  const yearJson = JSON.stringify(yearOutput);
+  const yearPath = path.join('static', `data-${y}.json`);
+  fs.writeFileSync(yearPath, yearJson);
+  const ySizeMB = (Buffer.byteLength(yearJson) / 1024 / 1024).toFixed(2);
+  const yBrSize = (zlib.brotliCompressSync(yearJson).length / 1024 / 1024).toFixed(2);
+  console.log(`  ${yearPath}: ${yRows.length} rows, ${ySizeMB} MB raw, ${yBrSize} MB Brotli`);
+}
+
+// Write manifest
+const manifest = { years: yearList, sources: output.d.Q || ['Einzelhandel'] };
+fs.writeFileSync(path.join('static', 'data-manifest.json'), JSON.stringify(manifest));
+console.log(`  static/data-manifest.json written (${yearList.length} years)`);
+console.log('Year-split complete.');

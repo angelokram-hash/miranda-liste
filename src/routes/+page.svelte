@@ -53,6 +53,11 @@
   let availableSources: string[] = $state([]);
   let selectedSources = $state(new Set<string>());
 
+  // ─── Incremental year loading ───
+  let loadedYears = $state(new Set<string>());
+  let loadingYears = $state(new Set<string>());
+  let allAvailableYears = $state<string[]>([]);
+
   // Pre-aggregated data — all derived, no $effect needed
   let preisSubTab = $state<'formpfad' | 'kollektion'>('formpfad');
   let kollSubMode = $state<'artikel' | 'subkollektion'>('artikel');
@@ -705,12 +710,8 @@
     return result;
   }
 
-  onMount(async () => {
-    const res = await fetch('/data.json');
-    const raw = await res.json();
-
-    // Decode dictionary-encoded format
-    const { d, r: rows } = raw;
+  // ─── Decode helper (shared by initial load + background year loads) ───
+  function decodeRows(d: any, rows: any[][]): RawRow[] {
     const decoded: RawRow[] = new Array(rows.length);
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
@@ -732,7 +733,6 @@
         Datum: datum,
         Quelle: d.Q ? d.Q[row[13]] : 'Einzelhandel',
       } as RawRow;
-      // Computed fields inline (avoids second 762k loop)
       const r = decoded[i] as any;
       r.Preisgruppe = getPreisgruppe(ep);
       r.Jahr = jahr;
@@ -740,32 +740,101 @@
       r.PreisObergruppe = getPreisObergruppe(ep);
       r.Umsatz = ep * an;
     }
+    return decoded;
+  }
 
+  // ─── Apply source + role filter + Channel eagerly ───
+  function applyFilters(decoded: RawRow[]): RawRow[] {
+    const multi = selectedSources.size > 1;
+    let filtered = decoded.filter(r => selectedSources.has(r.Quelle));
+    if (allowedKassen) {
+      filtered = filtered.filter(r =>
+        r.Quelle !== 'Einzelhandel' || allowedKassen!.includes(r.Kasse)
+      );
+    }
+    for (const r of filtered) {
+      ;(r as any).Channel = multi ? r.Quelle : r.Kasse;
+    }
+    return filtered;
+  }
+
+  // ─── Load additional year in background ───
+  async function loadYear(year: string) {
+    if (loadedYears.has(year) || loadingYears.has(year)) return;
+    loadingYears = new Set([...loadingYears, year]);
+    try {
+      const res = await fetch(`/data-${year}.json`);
+      if (!res.ok) return;
+      const { d, r: rows } = await res.json();
+      const decoded = decodeRows(d, rows);
+      // Merge into allDecodedData
+      allDecodedData = [...allDecodedData, ...decoded];
+      // Eagerly recompute allData (same reason as onMount: $effect is async)
+      allData = applyFilters(allDecodedData);
+      loadedYears = new Set([...loadedYears, year]);
+    } finally {
+      const next = new Set(loadingYears);
+      next.delete(year);
+      loadingYears = next;
+    }
+  }
+
+  // ─── Auto-load year when user navigates to an unloaded period ───
+  $effect(() => {
+    if (!currentPeriod || !allAvailableYears.length) return;
+    const neededYear = currentPeriod.split('-')[0];
+    if (neededYear && allAvailableYears.includes(neededYear) && !loadedYears.has(neededYear)) {
+      loadYear(neededYear);
+    }
+  });
+
+  onMount(async () => {
     // Read role from sessionStorage
     const role = sessionStorage.getItem('miranda-role') || 'all';
     userRole = role;
 
+    // Try year-split loading first (manifest + current year only)
+    let decoded: RawRow[];
+    let manifestSources: string[] | null = null;
+    try {
+      const mRes = await fetch('/data-manifest.json');
+      if (!mRes.ok) throw new Error('no manifest');
+      const manifest = await mRes.json();
+      allAvailableYears = manifest.years || [];
+      manifestSources = manifest.sources || null;
+
+      // Determine which year to load first
+      const now = new Date();
+      const currentYear = String(now.getFullYear());
+      const firstYear = allAvailableYears.includes(currentYear)
+        ? currentYear
+        : allAvailableYears[allAvailableYears.length - 1] || currentYear;
+
+      // Load current year
+      const yRes = await fetch(`/data-${firstYear}.json`);
+      const { d, r: rows } = await yRes.json();
+      decoded = decodeRows(d, rows);
+      loadedYears = new Set([firstYear]);
+    } catch {
+      // Fallback: load full data.json
+      const res = await fetch('/data.json');
+      const raw = await res.json();
+      decoded = decodeRows(raw.d, raw.r);
+      const years = [...new Set(decoded.map(r => (r as any).Jahr as string))].sort();
+      allAvailableYears = years;
+      loadedYears = new Set(years);
+    }
+
     // Detect available sources and select all by default
-    const sources = [...new Set(decoded.map(r => r.Quelle))].sort();
+    const sources = manifestSources || [...new Set(decoded.map(r => r.Quelle))].sort();
     availableSources = sources;
     selectedSources = new Set(sources);
 
     // Store decoded data — reactive pipeline handles filtering
     allDecodedData = decoded;
 
-    // Eagerly compute allData so downstream $derived indices are ready synchronously
-    // ($effect runs async, so allData would still be empty if we relied on it)
-    const multi = selectedSources.size > 1;
-    let initialFiltered = decoded.filter(r => selectedSources.has(r.Quelle));
-    if (allowedKassen) {
-      initialFiltered = initialFiltered.filter(r =>
-        r.Quelle !== 'Einzelhandel' || allowedKassen!.includes(r.Kasse)
-      );
-    }
-    for (const r of initialFiltered) {
-      ;(r as any).Channel = multi ? r.Quelle : r.Kasse;
-    }
-    allData = initialFiltered;
+    // Eagerly compute allData (same as before: $effect is async)
+    allData = applyFilters(decoded);
 
     // Default: current KW in current year
     const now = new Date();
@@ -774,8 +843,6 @@
     const currentKW = String(Math.ceil(((now.getTime() - oneJan.getTime()) / 86400000 + oneJan.getDay() + 1) / 7)).padStart(2, '0');
     const currentYearKW = `${currentYear}-${currentKW}`;
     timeUnit = 'woche';
-    // Wait for reactive pipeline to populate availableKWs
-    // (allData → weekIdx → availableKWs happens synchronously in Svelte 5)
     const kwI = availableKWs.indexOf(currentYearKW);
     if (kwI >= 0) {
       timeIdx = availableKWs.length - 1 - kwI;
@@ -785,13 +852,11 @@
 
     // ─── Pick & Share: restore from localStorage + hash ───
     try { const stored = localStorage.getItem('miranda-picks'); if (stored) savedLists = JSON.parse(stored); } catch {}
-    // Load list from URL hash: #pick=Name&nrs=nr1,nr2,...
     if (location.hash.includes('pick=')) {
       const params = new URLSearchParams(location.hash.slice(1));
       const hashName = decodeURIComponent(params.get('pick') || 'Liste');
       const hashNrs = (params.get('nrs') || '').split(',').filter(Boolean);
       if (hashNrs.length) {
-        // Build nr→article lookup from loaded data
         const nrLookup = new Map<string, { bildId: string; kollektion: string; einzelPreis: number }>();
         for (const r of allData) {
           const nr = String(r.Nr);
@@ -811,6 +876,14 @@
     }
 
     loading = false;
+
+    // Background-load remaining years (newest first, skip already loaded)
+    const remainingYears = [...allAvailableYears]
+      .filter(y => !loadedYears.has(y))
+      .sort((a, b) => b.localeCompare(a)); // newest first
+    for (const y of remainingYears) {
+      await loadYear(y);
+    }
   });
 
   const HOME_TAB: { id: TabId; label: string } = { id: 'dashboard', label: 'Dashboard' };
@@ -957,6 +1030,11 @@
               {/each}
             </div>
           </div>
+        {/if}
+        {#if loadingYears.size > 0}
+          <span class="text-[9px] animate-pulse ml-1" style="color: var(--warm-400);">Lade {[...loadingYears].join(', ')}…</span>
+        {:else if loadedYears.size > 0 && loadedYears.size < allAvailableYears.length}
+          <span class="text-[9px] ml-1" style="color: var(--warm-300);">{loadedYears.size}/{allAvailableYears.length} Jahre</span>
         {/if}
         <div class="ml-auto text-right">
           <p class="text-[10px] font-semibold" style="color: var(--warm-600);">Heute: {todayLabel}</p>
