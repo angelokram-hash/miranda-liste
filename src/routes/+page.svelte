@@ -1342,7 +1342,7 @@
           <p class="text-lg font-bold mt-0.5 tabular-nums" style="color: var(--warm-800);">{fmtNum(totalAnzahl)}</p>
           {#if compTotalAnzahl > 0}<p class="text-[10px] tabular-nums" style="color: {totalAnzahl > compTotalAnzahl ? '#6b8e5a' : totalAnzahl < compTotalAnzahl ? '#c06050' : 'var(--warm-400)'};">Vgl: {fmtNum(compTotalAnzahl)} {fmtDelta(totalAnzahl, compTotalAnzahl)}</p>{/if}
         </div>
-        <div class="rounded-xl p-4" style="background: white; border: 1px solid var(--warm-200);"><p class="text-[9px] font-semibold uppercase tracking-[0.15em]" style="color: var(--warm-400);">Einträge</p><p class="text-lg font-bold mt-0.5" style="color: var(--warm-800);">{fmtNum(currentGroups.length)}</p></div>
+        <div class="rounded-xl p-4" style="background: white; border: 1px solid var(--warm-200);"><p class="text-[9px] font-semibold uppercase tracking-[0.15em]" style="color: var(--warm-400);">Einträge</p><p class="text-lg font-bold mt-0.5" style="color: var(--warm-800);">{fmtNum(filteredData.length)}</p></div>
         <div class="rounded-xl p-4" style="background: white; border: 1px solid var(--warm-200);"><p class="text-[9px] font-semibold uppercase tracking-[0.15em]" style="color: var(--warm-400);">⌀ Preis</p><p class="text-lg font-bold mt-0.5 tabular-nums" style="color: var(--warm-800);">{fmtEUR(totalAnzahl > 0 ? totalUmsatz / totalAnzahl : 0)}</p></div>
       </div>
     </div>
