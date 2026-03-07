@@ -53,6 +53,7 @@
   let kollDropdownOpen = $state(false)
   let kollSearchTerm = $state('')
   let filterOpen = $state(false)
+  let zeitraumOpen = $state(false)
   let loading = $state(true);
   let activeTab = $state<TabId>('dashboard');
 
@@ -99,7 +100,7 @@
   // ── Unified time navigation ──
   type TimeUnit = 'tag' | 'woche' | 'monat' | 'jahr' | 'alles';
   type CompareType = 'vorperiode' | 'vorjahr';
-  let timeUnit = $state<TimeUnit>('woche');
+  let timeUnit = $state<TimeUnit>('monat');
   let timeIdx = $state(0); // 0 = latest period
   let compareType = $state<CompareType>('vorperiode');
 
@@ -160,6 +161,11 @@
     if (!iso) return '';
     const [y, m, d] = iso.split('-');
     return `${d}.${m}.${y}`;
+  }
+  function fmtDate2(iso: string): string {
+    if (!iso) return '';
+    const [y, m, d] = iso.split('-');
+    return `${d}.${m}.${y.slice(2)}`;
   }
   let currentDateRange = $derived.by((): string => {
     if (!currentPeriod || timeUnit === 'tag' || timeUnit === 'alles') return '';
@@ -324,6 +330,15 @@
   // ─── Lazy per-tab aggregation (only compute what's visible) ───
   let totalUmsatz = $derived(filteredData.reduce((s, r) => s + ((r as any).Umsatz || 0), 0));
   let totalAnzahl = $derived(filteredData.reduce((s, r) => s + (r.Anzahl || 0), 0));
+  let filteredDateRange = $derived.by(() => {
+    if (!filteredData.length) return { min: '', max: '' }
+    let min = filteredData[0].Datum, max = min
+    for (const r of filteredData) {
+      if (r.Datum < min) min = r.Datum
+      if (r.Datum > max) max = r.Datum
+    }
+    return { min, max }
+  });
 
   // Cache: multi-key, only recompute when period changes
   let _groupCache = new Map<string, GroupNode[]>()
@@ -797,16 +812,15 @@
       selectedKollektion = []
       allDecodedData = decodeRows(d, rows)
       allData = applyFilters(allDecodedData)
-      // Init time navigation to current week
+      // Init time navigation to current month (≈ last 30 days)
       const now = new Date()
       const currentYear = String(now.getFullYear())
-      const oneJan = new Date(now.getFullYear(), 0, 1)
-      const currentKW = String(Math.ceil(((now.getTime() - oneJan.getTime()) / 86400000 + oneJan.getDay() + 1) / 7)).padStart(2, '0')
-      const currentYearKW = `${currentYear}-${currentKW}`
-      timeUnit = 'woche'
-      const kwI = availableKWs.indexOf(currentYearKW)
-      if (kwI >= 0) {
-        timeIdx = availableKWs.length - 1 - kwI
+      const currentMon = MONAT_ORDER[now.getMonth()]
+      const currentYearMon = `${currentYear}-${currentMon}`
+      timeUnit = 'monat'
+      const monI = availableMonths.indexOf(currentYearMon)
+      if (monI >= 0) {
+        timeIdx = availableMonths.length - 1 - monI
       } else {
         timeIdx = 0
       }
@@ -1031,60 +1045,76 @@
           </div>
         </div>
       </div>
-      <!-- Time Navigation -->
-      <div class="flex flex-wrap items-center gap-3 mb-2 py-3 rounded-xl px-4" style="background: linear-gradient(135deg, var(--warm-100), #f5efe8); border: 2px solid var(--accent); box-shadow: 0 2px 8px rgba(176,124,62,0.12);">
-        <div class="flex items-center gap-2">
-          <span class="text-[9px] font-bold uppercase tracking-[0.15em]" style="color: var(--accent);">Zeitraum:</span>
-          <div class="flex rounded-lg overflow-hidden" style="border: 1px solid var(--warm-200);">
-            {#each ([['tag','Tag'],['woche','Woche'],['monat','Monat'],['jahr','Jahr'],['alles','Alles']] as const) as [val, label], pi}
-              <button onclick={() => switchTimeUnit(val)} class="px-3 py-1 text-[10px] font-semibold"
-                style="background: {timeUnit === val ? 'var(--accent)' : 'white'}; color: {timeUnit === val ? 'white' : 'var(--warm-500)'}; {pi > 0 ? 'border-left: 1px solid var(--warm-200)' : ''};">{label}</button>
-            {/each}
-          </div>
-        </div>
-        <div class="flex items-center gap-2">
-          <button onclick={goPrev} disabled={timeIdx >= periods.length - 1} class="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold disabled:opacity-25" style="background: var(--accent); color: white;">&#9664;</button>
-          <div class="text-center min-w-20">
-            <p class="text-sm font-bold" style="color: var(--warm-800); font-family: var(--font-heading);">{currentPeriodLabel}</p>
-            {#if currentDateRange}<p class="text-[8px]" style="color: var(--warm-400);">{currentDateRange}</p>{/if}
-          </div>
-          <button onclick={goNext} disabled={timeIdx <= 0} class="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold disabled:opacity-25" style="background: var(--accent); color: white;">&#9654;</button>
-          {#if comparePeriodLabel}
-            <div class="text-center min-w-20 ml-1 pl-2" style="border-left: 1px solid var(--warm-300);">
-              <p class="text-[9px] font-medium" style="color: var(--warm-400);">vs {comparePeriodLabel}</p>
-              {#if compareDateRange}<p class="text-[8px]" style="color: var(--warm-300);">{compareDateRange}</p>{/if}
-            </div>
-          {/if}
-        </div>
-        <div class="flex items-center gap-2 ml-1 pl-2" style="border-left: 1.5px solid var(--warm-300);">
-          <span class="text-[9px] font-bold uppercase tracking-[0.12em]" style="color: var(--accent);">Vergleich:</span>
-          <div class="flex rounded-lg overflow-hidden" style="border: 1px solid var(--warm-200);">
-            <button onclick={() => compareType = 'vorperiode'} class="px-2.5 py-1 text-[10px] font-medium"
-              style="background: {compareType === 'vorperiode' ? 'var(--accent)' : 'white'}; color: {compareType === 'vorperiode' ? 'white' : 'var(--warm-500)'};">Vorperiode</button>
-            <button onclick={() => compareType = 'vorjahr'} class="px-2.5 py-1 text-[10px] font-medium"
-              style="background: {compareType === 'vorjahr' ? 'var(--accent)' : 'white'}; color: {compareType === 'vorjahr' ? 'white' : 'var(--warm-500)'}; border-left: 1px solid var(--warm-200);">Jahresvergleich</button>
-          </div>
-        </div>
-        {#if compareData.length > 0}
-          <span class="text-[9px] px-2 py-0.5 rounded-full" style="background: var(--warm-200); color: var(--warm-600);">
-            Vgl: {compTotalAnzahl > 0 ? fmtNum(compTotalAnzahl) + ' Stk' : 'keine Daten'}
+      <!-- Time Navigation (collapsible) -->
+      <div class="mb-2 rounded-xl overflow-hidden" style="background: linear-gradient(135deg, var(--warm-100), #f5efe8); border: 2px solid var(--accent); box-shadow: 0 2px 8px rgba(176,124,62,0.12);">
+        <button onclick={() => zeitraumOpen = !zeitraumOpen}
+          class="w-full flex items-center gap-2 px-4 py-2.5 cursor-pointer">
+          <svg width="12" height="12" viewBox="0 0 20 20" fill="currentColor"
+            class="transition-transform duration-200" style="color: var(--accent); transform: rotate({zeitraumOpen ? '180deg' : '0deg'});">
+            <path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"/>
+          </svg>
+          <span class="text-[10px] font-bold uppercase tracking-[0.12em]" style="color: var(--accent);">Zeitraum</span>
+          <span class="text-[10px] font-semibold" style="color: var(--warm-600);">
+            {filteredDateRange.min ? fmtDate2(filteredDateRange.min) + ' – ' + fmtDate2(filteredDateRange.max) : ''}
           </span>
-        {/if}
-        {#if activePackage}
-          <div class="flex items-center gap-2 ml-1 pl-2" style="border-left: 1.5px solid var(--warm-300);">
-            <span class="text-[9px] font-bold uppercase tracking-[0.12em]" style="color: var(--accent);">Paket:</span>
-            <span class="px-2.5 py-1 text-[10px] font-semibold rounded-full" style="border: 1.5px solid var(--accent); color: white; background: var(--accent);">{activePackage.name}</span>
-            {#if allowedPackages.length > 1}
-              <button onclick={switchPackage} class="text-[9px] font-medium underline" style="color: var(--warm-400);">wechseln</button>
+          <span class="text-[9px] font-medium px-2 py-0.5 rounded-full" style="background: var(--accent); color: white;">
+            {fmtNum(filteredData.length)} Datensätze
+          </span>
+          <span class="ml-auto text-[10px] font-semibold" style="color: var(--warm-600);">Heute: {todayLabel}</span>
+        </button>
+        {#if zeitraumOpen}
+          <div class="flex flex-wrap items-center gap-3 px-4 pb-3">
+            <div class="flex items-center gap-2">
+              <span class="text-[9px] font-bold uppercase tracking-[0.15em]" style="color: var(--accent);">Zeitraum:</span>
+              <div class="flex rounded-lg overflow-hidden" style="border: 1px solid var(--warm-200);">
+                {#each ([['tag','Tag'],['woche','Woche'],['monat','Monat'],['jahr','Jahr'],['alles','Alles']] as const) as [val, label], pi}
+                  <button onclick={() => switchTimeUnit(val)} class="px-3 py-1 text-[10px] font-semibold"
+                    style="background: {timeUnit === val ? 'var(--accent)' : 'white'}; color: {timeUnit === val ? 'white' : 'var(--warm-500)'}; {pi > 0 ? 'border-left: 1px solid var(--warm-200)' : ''};">{label}</button>
+                {/each}
+              </div>
+            </div>
+            <div class="flex items-center gap-2">
+              <button onclick={goPrev} disabled={timeIdx >= periods.length - 1} class="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold disabled:opacity-25" style="background: var(--accent); color: white;">&#9664;</button>
+              <div class="text-center min-w-20">
+                <p class="text-sm font-bold" style="color: var(--warm-800); font-family: var(--font-heading);">{currentPeriodLabel}</p>
+                {#if currentDateRange}<p class="text-[8px]" style="color: var(--warm-400);">{currentDateRange}</p>{/if}
+              </div>
+              <button onclick={goNext} disabled={timeIdx <= 0} class="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold disabled:opacity-25" style="background: var(--accent); color: white;">&#9654;</button>
+              {#if comparePeriodLabel}
+                <div class="text-center min-w-20 ml-1 pl-2" style="border-left: 1px solid var(--warm-300);">
+                  <p class="text-[9px] font-medium" style="color: var(--warm-400);">vs {comparePeriodLabel}</p>
+                  {#if compareDateRange}<p class="text-[8px]" style="color: var(--warm-300);">{compareDateRange}</p>{/if}
+                </div>
+              {/if}
+            </div>
+            <div class="flex items-center gap-2 ml-1 pl-2" style="border-left: 1.5px solid var(--warm-300);">
+              <span class="text-[9px] font-bold uppercase tracking-[0.12em]" style="color: var(--accent);">Vergleich:</span>
+              <div class="flex rounded-lg overflow-hidden" style="border: 1px solid var(--warm-200);">
+                <button onclick={() => compareType = 'vorperiode'} class="px-2.5 py-1 text-[10px] font-medium"
+                  style="background: {compareType === 'vorperiode' ? 'var(--accent)' : 'white'}; color: {compareType === 'vorperiode' ? 'white' : 'var(--warm-500)'};">Vorperiode</button>
+                <button onclick={() => compareType = 'vorjahr'} class="px-2.5 py-1 text-[10px] font-medium"
+                  style="background: {compareType === 'vorjahr' ? 'var(--accent)' : 'white'}; color: {compareType === 'vorjahr' ? 'white' : 'var(--warm-500)'}; border-left: 1px solid var(--warm-200);">Jahresvergleich</button>
+              </div>
+            </div>
+            {#if compareData.length > 0}
+              <span class="text-[9px] px-2 py-0.5 rounded-full" style="background: var(--warm-200); color: var(--warm-600);">
+                Vgl: {compTotalAnzahl > 0 ? fmtNum(compTotalAnzahl) + ' Stk' : 'keine Daten'}
+              </span>
+            {/if}
+            {#if activePackage}
+              <div class="flex items-center gap-2 ml-1 pl-2" style="border-left: 1.5px solid var(--warm-300);">
+                <span class="text-[9px] font-bold uppercase tracking-[0.12em]" style="color: var(--accent);">Paket:</span>
+                <span class="px-2.5 py-1 text-[10px] font-semibold rounded-full" style="border: 1.5px solid var(--accent); color: white; background: var(--accent);">{activePackage.name}</span>
+                {#if allowedPackages.length > 1}
+                  <button onclick={switchPackage} class="text-[9px] font-medium underline" style="color: var(--warm-400);">wechseln</button>
+                {/if}
+              </div>
+            {/if}
+            {#if packageLoading}
+              <span class="text-[9px] animate-pulse ml-1" style="color: var(--warm-400);">Lade…</span>
             {/if}
           </div>
         {/if}
-        {#if packageLoading}
-          <span class="text-[9px] animate-pulse ml-1" style="color: var(--warm-400);">Lade…</span>
-        {/if}
-        <div class="ml-auto text-right">
-          <p class="text-[10px] font-semibold" style="color: var(--warm-600);">Heute: {todayLabel}</p>
-        </div>
       </div>
       <!-- Global Art + Kollektion Filter (collapsible) -->
       {#if allArtValues.length > 0 || allKollValues.length > 0}
