@@ -1126,12 +1126,11 @@
               class="transition-transform duration-200" style="transform: rotate({filterOpen ? '180deg' : '0deg'});">
               <path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"/>
             </svg>
-            <span class="text-[10px] font-bold uppercase tracking-[0.12em]" style="color: var(--accent);">Globale Selektion</span>
-            {#if selectedArt.length > 0 || selectedKollektion.length > 0}
-              <span class="text-[9px] font-medium px-2 py-0.5 rounded-full" style="background: var(--accent); color: white;">
-                {selectedArt.length + selectedKollektion.length} aktiv
-              </span>
-            {/if}
+            <span class="text-[10px] font-bold uppercase tracking-[0.12em]" style="color: var(--accent);">Globale Filter</span>
+            <span class="text-[9px] font-medium px-2 py-0.5 rounded-full"
+              style="background: {selectedArt.length > 0 || selectedKollektion.length > 0 ? 'var(--accent)' : 'var(--warm-200)'}; color: {selectedArt.length > 0 || selectedKollektion.length > 0 ? 'white' : 'var(--warm-500)'};">
+              {selectedArt.length + selectedKollektion.length > 0 ? (selectedArt.length + selectedKollektion.length) + ' aktiv' : 'keine Filter'}
+            </span>
           </button>
           {#if filterOpen}
             <div class="flex flex-wrap items-center gap-3 px-4 pb-2.5">
